@@ -92,48 +92,51 @@ const CHMLFRP_ARTIFACT_BASE = 'https://cf-v1.uapis.cn/download'
  * the official download page and verified before anything is executed. The zips
  * place `frpc.exe` at the archive root instead of nesting it, so these entries set
  * `nestedExecutable: false`.
+ *
+ * NOTE: `CHMLFRP_VERSION` already carries the `ChmlFrp-` prefix, so the URL
+ * template must not repeat it.
  */
 const chmlfrpReleases = [
   {
     platform: 'win32', arch: 'x64', archiveName: 'chmlfrp.zip', executableName: 'frpc.exe',
     downloadBytes: 5_621_859,
     downloadSha256: 'cdbdec6be0300023c5107650197788f0ec417d4cfdea920ca4c148467102b7e6',
-    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_2_windows_amd64.zip`,
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/${CHMLFRP_VERSION}_2_windows_amd64.zip`,
     allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
   },
   {
     platform: 'win32', arch: 'arm64', archiveName: 'chmlfrp.zip', executableName: 'frpc.exe',
     downloadBytes: 5_067_955,
     downloadSha256: 'c0330afa4429924d071d60c4197a48bcd426526de8c2b09058be20295a657f7e',
-    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_2_windows_arm64.zip`,
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/${CHMLFRP_VERSION}_2_windows_arm64.zip`,
     allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
   },
   {
     platform: 'linux', arch: 'x64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
     downloadBytes: 12_063_513,
     downloadSha256: 'e1a83d0cf7b7bf69d04610f2c0ba952e8185e377a3ef889921def52f03b4e4a6',
-    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_linux_amd64.tar.gz`,
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/${CHMLFRP_VERSION}_linux_amd64.tar.gz`,
     allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
   },
   {
     platform: 'linux', arch: 'arm64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
     downloadBytes: 10_922_270,
     downloadSha256: '2e1973aafabc6b7b2371ecdc679d6a0931753a137bc0ccc5d8b5f2ca4b17a253',
-    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_linux_arm64.tar.gz`,
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/${CHMLFRP_VERSION}_linux_arm64.tar.gz`,
     allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
   },
   {
     platform: 'darwin', arch: 'x64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
     downloadBytes: 12_579_704,
     downloadSha256: '23229fc02104cceb0d1483fd3fa053f9dae8e8b0725a8df5e9f09094541bbe53',
-    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_darwin_amd64.tar.gz`,
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/${CHMLFRP_VERSION}_darwin_amd64.tar.gz`,
     allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
   },
   {
     platform: 'darwin', arch: 'arm64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
     downloadBytes: 11_997_609,
     downloadSha256: '541319d1324df135e0f21cb93bcd5b1231e62be4b22a5ca4d9831d04c2476417',
-    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_darwin_arm64.tar.gz`,
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/${CHMLFRP_VERSION}_darwin_arm64.tar.gz`,
     allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
   },
 ] as const satisfies readonly FrpArtifact[]
