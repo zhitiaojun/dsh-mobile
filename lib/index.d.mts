@@ -901,6 +901,12 @@ interface CloudflareControllerOptions {
   readonly instanceId: string;
   readonly createGateway: (origin: string, listenPort?: number) => Promise<MobileAccessGateway>;
   readonly onStatus?: (status: CloudflareStatus) => void;
+  /**
+   * Called when the tunnel announced a hostname but discovery never succeeded.
+   * The last probe failure is forwarded purely for diagnostics, since a silent
+   * retry loop hides whether DNS or the gateway is at fault.
+   */
+  readonly onDiscoveryFailure?: (origin: string, lastFailure: string | undefined) => void;
   readonly launchClient?: (executable: string, listenPort: number) => ChildProcessWithoutNullStreams;
   readonly probeDiscovery?: (origin: string, expectedInstanceId: string, signal: AbortSignal) => Promise<boolean>;
   readonly startTimeoutMs?: number;

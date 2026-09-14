@@ -361,7 +361,15 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const cpolarChoiceBadge = element('span', 'dsh-mobile-control__provider-badge is-cpolar'); cpolarChoiceBadge.textContent = t('mainlandPreferred')
   const cpolarChoiceDescription = element('span', 'dsh-mobile-control__provider-description'); cpolarChoiceDescription.textContent = t('cpolarDescription')
   cpolarChoiceTop.append(cpolarChoiceName, cpolarChoiceBadge); cpolarChoice.append(cpolarChoiceTop, cpolarChoiceDescription)
-  providerChoices.append(cpolarChoice, tailscaleChoice)
+  // Cloudflare sits beside cpolar and Tailscale: it needs no account, no own domain
+  // and no server, so it is a built-in-style option rather than an advanced setup.
+  const cloudflareChoice = element('button', 'dsh-mobile-control__provider'); cloudflareChoice.type = 'button'; cloudflareChoice.setAttribute('role', 'radio'); cloudflareChoice.setAttribute('aria-checked', 'false')
+  const cloudflareChoiceTop = element('span', 'dsh-mobile-control__provider-top')
+  const cloudflareChoiceName = element('strong'); cloudflareChoiceName.textContent = t('cloudflareName')
+  const cloudflareChoiceBadge = element('span', 'dsh-mobile-control__provider-badge'); cloudflareChoiceBadge.textContent = t('noAccountNeeded')
+  const cloudflareChoiceDescription = element('span', 'dsh-mobile-control__provider-description'); cloudflareChoiceDescription.textContent = t('cloudflareDescription')
+  cloudflareChoiceTop.append(cloudflareChoiceName, cloudflareChoiceBadge); cloudflareChoice.append(cloudflareChoiceTop, cloudflareChoiceDescription)
+  providerChoices.append(cpolarChoice, tailscaleChoice, cloudflareChoice)
   const cpolarSetup = element('section', 'dsh-mobile-control__cpolar-setup'); cpolarSetup.hidden = true
   const cpolarSetupTitle = element('h3', 'dsh-mobile-control__section-title'); cpolarSetupTitle.textContent = t('prepareCpolar')
   const cpolarComponentStatus = element('p', 'dsh-mobile-control__component-status'); cpolarComponentStatus.textContent = t('checkingComponent')
@@ -421,15 +429,10 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   chmlfrpBody.append(chmlfrpComponentStatus, chmlfrpInstall, chmlfrpIniLabel, chmlfrpStatus, chmlfrpConfigure, chmlfrpPurge)
   chmlfrp.append(chmlfrpSummary, chmlfrpBody)
   // ---- Cloudflare quick tunnel: no account, no domain, hostname assigned at runtime.
-  const cloudflare = element('details', 'dsh-mobile-control__self-hosted')
-  const cloudflareSummary = element('summary', 'dsh-mobile-control__self-hosted-summary')
-  const cloudflareSummaryText = element('span')
-  const cloudflareSummaryTitle = element('strong'); cloudflareSummaryTitle.textContent = t('cloudflareName')
-  const cloudflareSummaryDescription = element('span'); cloudflareSummaryDescription.textContent = t('cloudflareDescription')
-  const cloudflareBadge = element('span', 'dsh-mobile-control__provider-badge is-frp'); cloudflareBadge.textContent = t('advanced')
-  cloudflareSummaryText.append(cloudflareSummaryTitle, cloudflareSummaryDescription)
-  cloudflareSummary.append(cloudflareSummaryText, cloudflareBadge)
-  const cloudflareBody = element('div', 'dsh-mobile-control__self-hosted-body')
+  // Rendered as a peer setup section, not a collapsed advanced block, because it
+  // requires no more preparation than cpolar or Tailscale do.
+  const cloudflareSetup = element('section', 'dsh-mobile-control__cpolar-setup'); cloudflareSetup.hidden = true
+  const cloudflareSetupTitle = element('h3', 'dsh-mobile-control__section-title'); cloudflareSetupTitle.textContent = t('cloudflareName')
   const cloudflareComponentStatus = element('p', 'dsh-mobile-control__component-status'); cloudflareComponentStatus.textContent = t('checkingComponent')
   const cloudflareInstall = element('button', 'dsh-mobile-control__primary dsh-mobile-control__frp-action'); cloudflareInstall.type = 'button'; cloudflareInstall.textContent = t('cloudflareInstallClient')
   const cloudflareNote = element('p', 'dsh-mobile-control__frp-requirement'); cloudflareNote.textContent = t('cloudflareQuickNote')
@@ -437,9 +440,8 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const cloudflareOrigin = element('code', 'dsh-mobile-control__storage'); cloudflareOrigin.textContent = ''
   const cloudflareConnect = element('button', 'dsh-mobile-control__primary dsh-mobile-control__frp-action'); cloudflareConnect.type = 'button'; cloudflareConnect.textContent = t('saveConnect')
   const cloudflarePurge = element('button', 'dsh-mobile-control__danger'); cloudflarePurge.type = 'button'; cloudflarePurge.textContent = t('cloudflarePurge')
-  cloudflareBody.append(cloudflareComponentStatus, cloudflareInstall, cloudflareNote, cloudflareStatus, cloudflareOrigin, cloudflareConnect, cloudflarePurge)
-  cloudflare.append(cloudflareSummary, cloudflareBody)
-  providerSection.append(providerHeading, providerInfo, providerChoices, selfHosted, chmlfrp, cloudflare)
+  cloudflareSetup.append(cloudflareSetupTitle, cloudflareComponentStatus, cloudflareInstall, cloudflareNote, cloudflareStatus, cloudflareOrigin, cloudflareConnect, cloudflarePurge)
+  providerSection.append(providerHeading, providerInfo, providerChoices, selfHosted, chmlfrp)
   const frpSetup = element('section', 'dsh-mobile-control__frp-setup'); frpSetup.hidden = true
   const frpSetupTitle = element('h3', 'dsh-mobile-control__section-title'); frpSetupTitle.textContent = t('prepareFrp')
   const frpStep1 = element('section', 'dsh-mobile-control__frp-step')
@@ -737,7 +739,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   let origin = ''
   let remoteRunning = false
   let remoteReady = false
-  let remoteProvider: 'tailscale' | 'cpolar' | 'frp' = 'tailscale'
+  let remoteProvider: 'tailscale' | 'cpolar' | 'frp' | 'cloudflare' = 'tailscale'
   let remoteLoginUrl = ''
   let remoteSetupUrl = ''
   let remoteSetupPending = false
@@ -926,7 +928,10 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   })
   const renderRemote = (data: Record<string, unknown>): void => {
     remoteRunning = data.running === true
-    remoteProvider = data.provider === 'cpolar' ? 'cpolar' : data.provider === 'frp' ? 'frp' : 'tailscale'
+    remoteProvider = data.provider === 'cpolar' ? 'cpolar'
+      : data.provider === 'frp' ? 'frp'
+        : data.provider === 'cloudflare' ? 'cloudflare'
+          : 'tailscale'
     const cpolar = remoteProvider === 'cpolar'
     const frp = remoteProvider === 'frp'
     const tailscale = remoteProvider === 'tailscale'
@@ -942,6 +947,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     frpChoice.disabled = remoteProviderBusy
     cpolarSetup.hidden = !cpolar
     frpSetup.hidden = !frp
+    cloudflareSetup.hidden = remoteProvider !== 'cloudflare'
     if (frp) selfHosted.open = true
     tailscaleInfo.hidden = !tailscale
     remoteReset.textContent = tailscale ? t('resetRemoteLogin') : t('resetRemoteDevices')
@@ -1083,7 +1089,6 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       : t('frpConfigurationMissing')
     cloudflareOrigin.textContent = cloudflarePublicOrigin
     cloudflareOrigin.title = cloudflarePublicOrigin
-    cloudflareBadge.textContent = cloudflareRunning && cloudflarePublicOrigin !== '' ? t('ready') : t('advanced')
     cloudflareConnect.textContent = cloudflareRunning ? t('reconnect') : t('saveConnect')
     if (!frpLayoutInitialized) {
       frpConnectionGroup.open = !frpConfigured
@@ -1193,14 +1198,15 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       .then(renderRemote, error => { remoteStatus.textContent = t('requestFailed', { error: String(error) }) })
       .finally(() => { remoteLoadInFlight = false })
   }
-  const chooseRemoteProvider = (provider: 'tailscale' | 'cpolar' | 'frp'): void => {
+  const chooseRemoteProvider = (provider: 'tailscale' | 'cpolar' | 'frp' | 'cloudflare'): void => {
     if (remoteProviderBusy || provider === remoteProvider) return
     if (remoteRunning && !window.confirm(t('switchProviderConfirm'))) return
     remoteProviderBusy = true
     tailscaleChoice.disabled = true
     cpolarChoice.disabled = true
     frpChoice.disabled = true
-    remoteStatus.textContent = provider === 'cpolar' ? t('switchingCpolar') : provider === 'frp' ? t('switchingFrp') : t('switchingTailscale')
+    cloudflareChoice.disabled = true
+    remoteStatus.textContent = provider === 'cpolar' ? t('switchingCpolar') : provider === 'frp' ? t('switchingFrp') : provider === 'cloudflare' ? t('switchingCloudflare') : t('switchingTailscale')
     void controlRequestJson('/api/mobile-access/remote/provider', { method: 'POST', body: JSON.stringify({ provider }) })
       .then(renderRemote, error => { remoteStatus.textContent = t('requestFailed', { error: String(error) }) })
       .finally(() => { remoteProviderBusy = false; loadRemote() })
@@ -1208,6 +1214,7 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   tailscaleChoice.addEventListener('click', () => { chooseRemoteProvider('tailscale') })
   cpolarChoice.addEventListener('click', () => { chooseRemoteProvider('cpolar') })
   frpChoice.addEventListener('click', () => { chooseRemoteProvider('frp') })
+  cloudflareChoice.addEventListener('click', () => { chooseRemoteProvider('cloudflare') })
   cpolarInstall.addEventListener('click', () => {
     if (remoteProviderBusy) return
     const accepted = window.confirm(t('installConfirm'))

@@ -5,7 +5,12 @@ import type { MobileAccessControlStore } from './control.js'
 import type { MobileAccessGateway } from './gateway.js'
 import { settleRemoteResources, terminateRemoteProcess, type RemoteProviderController, type RemoteProviderStatus } from './remote.js'
 
-const START_TIMEOUT_MS = 60_000
+/**
+ * A quick tunnel's hostname is newly created and may not resolve everywhere at
+ * once. The generic 45 s used by the other transports is too tight for that DNS
+ * propagation, so this transport waits longer before giving up.
+ */
+const START_TIMEOUT_MS = 150_000
 const DISCOVERY_REQUEST_TIMEOUT_MS = 5_000
 const DISCOVERY_RETRY_MS = 1_000
 const MAX_DISCOVERY_BYTES = 16 * 1024
@@ -30,6 +35,12 @@ export interface CloudflareControllerOptions {
   readonly instanceId: string
   readonly createGateway: (origin: string, listenPort?: number) => Promise<MobileAccessGateway>
   readonly onStatus?: (status: CloudflareStatus) => void
+  /**
+   * Called when the tunnel announced a hostname but discovery never succeeded.
+   * The last probe failure is forwarded purely for diagnostics, since a silent
+   * retry loop hides whether DNS or the gateway is at fault.
+   */
+  readonly onDiscoveryFailure?: (origin: string, lastFailure: string | undefined) => void
   readonly launchClient?: (executable: string, listenPort: number) => ChildProcessWithoutNullStreams
   readonly probeDiscovery?: (origin: string, expectedInstanceId: string, signal: AbortSignal) => Promise<boolean>
   readonly startTimeoutMs?: number
@@ -311,6 +322,7 @@ export class CloudflareController implements RemoteProviderController {
     const deadline = Date.now() + (this.options.startTimeoutMs ?? START_TIMEOUT_MS)
     const probe = this.options.probeDiscovery ?? defaultProbeDiscovery
     const instanceId = this.options.instanceId
+    let lastFailure: string | undefined
     while (!signal.aborted && Date.now() < deadline) {
       try {
         if (await probe(origin, instanceId, signal)) {
@@ -321,12 +333,19 @@ export class CloudflareController implements RemoteProviderController {
           })
           return
         }
+        lastFailure = 'probe returned not-ok'
       } catch (error) {
         if (signal.aborted) return
-        if (error instanceof Error && (error.message === 'cloudflare_discovery_mismatch' || error.message === 'cloudflare_discovery_invalid')) {
-          await this.enqueue(() => this.failGeneration(generation, error.message))
+        const message = error instanceof Error ? error.message : String(error)
+        if (message === 'cloudflare_discovery_mismatch' || message === 'cloudflare_discovery_invalid') {
+          await this.enqueue(() => this.failGeneration(generation, message))
           return
         }
+        // A freshly assigned quick-tunnel hostname is not resolvable everywhere at
+        // once, so network failures are expected for a while. Record the last one
+        // rather than swallowing it: a silent retry loop makes a real
+        // misconfiguration indistinguishable from slow DNS.
+        lastFailure = message
       }
       await new Promise<void>(resolveWait => {
         let finished = false
@@ -342,7 +361,10 @@ export class CloudflareController implements RemoteProviderController {
         signal.addEventListener('abort', finish, { once: true })
       })
     }
-    if (!signal.aborted) await this.enqueue(() => this.failGeneration(generation, 'cloudflare_start_timeout'))
+    if (!signal.aborted) {
+      this.options.onDiscoveryFailure?.(origin, lastFailure)
+      await this.enqueue(() => this.failGeneration(generation, 'cloudflare_start_timeout'))
+    }
   }
 
   private async failGeneration(generation: number, code: string): Promise<void> {

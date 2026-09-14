@@ -564,6 +564,15 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
       executable: cloudflaredComponent.executable,
       instanceId,
       createGateway: createRemoteGateway,
+      onStatus(status) {
+        logger.info('cloudflare state=%s origin=%s%s', status.state, status.origin ?? 'none',
+          status.errorCode === undefined ? '' : ` error=${status.errorCode}`)
+      },
+      onDiscoveryFailure(origin, lastFailure) {
+        // Without this the retry loop is silent, so a DNS problem looks identical to
+        // a gateway that never came up.
+        logger.error('cloudflare discovery never succeeded origin=%s lastFailure=%s', origin, lastFailure ?? 'unknown')
+      },
     }),
   }
   const remoteProviders = new RemoteProviderCoordinator(initialRemoteProvider, remoteControllers, remoteProviderStore)
