@@ -66,8 +66,9 @@
     "test": "vitest run --pool=threads --maxWorkers=1",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepack": "npm run check:version && npm run check:funnel-licenses && npm run build",
-    "verify": "npm run check:version && npm run check:funnel-licenses && npm run check:mobile-release && npm run typecheck && npm run test && npm run build && npm pack --dry-run"
+    "prepack": "npm run check:version",
+    "verify": "npm run check:version && npm run check:funnel-licenses && npm run check:mobile-release && npm run typecheck && npm run test && npm run build && npm pack --dry-run",
+    "_comment:prepack": "This fork is consumed as a git dependency, where devDependencies (tsdown) are absent, so prepack must not build. It still pins the shipped version metadata."
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"

@@ -1,5 +1,7 @@
 node_modules/
-lib/
+# Upstream publishes lib/ only to npm. This fork is installed as a git
+# dependency, so the runtime bundles must live in the repository.
+lib/**/*.map
 coverage/
 *.tgz
 .DS_Store
