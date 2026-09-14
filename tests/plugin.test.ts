@@ -206,6 +206,60 @@ describe('remote Funnel gateway configuration', () => {
     expect(policy.acceptsOrigin(`https://${publicHost}:58916`)).toBe(false)
   })
 
+  it('takes the listener and authority from an external tunnel override', () => {
+    // A Cloudflare quick tunnel cannot be described ahead of time: the hostname
+    // only exists once the tunnel is up, so the tunnel plugin publishes a
+    // gateway override and the gateway must honour it verbatim.
+    const template = parseGatewayConfig({
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+      publicAuthorities: ['127.0.0.1'],
+      allowedCidrs: ['127.0.0.0/8'],
+      stateFile: join(tmpdir(), 'dsh-mobile-override-template.json'),
+      tls: { mode: 'disabled' },
+    })
+    const tunnelHost = 'hours-referral-overcome-provinces.trycloudflare.com'
+    const config = remoteGatewayConfig(
+      template,
+      'https://placeholder.example.com',
+      join(tmpdir(), 'dsh-mobile-override-devices.json'),
+      'b'.repeat(64),
+      0,
+      { publicOrigin: `https://${tunnelHost}`, listenPort: 34_430 },
+    )
+
+    // The override pins the loopback listener the tunnel forwards to.
+    expect(config.listenHost).toBe('127.0.0.1')
+    expect(config.listenPort).toBe(34_430)
+    // The authority still comes from the origin: portless HTTPS means 443, which
+    // is what an edge-terminated tunnel presents.
+    expect(config.authorities).toEqual([{ hostname: tunnelHost, port: 443 }])
+
+    const policy = new RequestTrustPolicy(config.authorities, config.listenPort, [parseCidr('127.0.0.0/8')], config.publicTls)
+    // This is the exact header cloudflared forwards, verified against a live tunnel.
+    expect(policy.acceptsHost(tunnelHost)).toBe(true)
+    expect(policy.acceptsHost(`${tunnelHost}:34430`)).toBe(false)
+  })
+
+  it('keeps the ephemeral listener when no override is present', () => {
+    const template = parseGatewayConfig({
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+      publicAuthorities: ['127.0.0.1'],
+      allowedCidrs: ['127.0.0.0/8'],
+      stateFile: join(tmpdir(), 'dsh-mobile-nooverride-template.json'),
+      tls: { mode: 'disabled' },
+    })
+    const config = remoteGatewayConfig(
+      template,
+      'https://dsh.example.com',
+      join(tmpdir(), 'dsh-mobile-nooverride-devices.json'),
+      'c'.repeat(64),
+    )
+    expect(config.listenPort).toBe(0)
+    expect(config.authorities).toEqual([{ hostname: 'dsh.example.com', port: 443 }])
+  })
+
   it('allows a transport-owned fixed loopback port without changing the public authority', () => {
     const template = parseGatewayConfig({
       listenHost: '127.0.0.1',

@@ -235,14 +235,63 @@ async function stableInstanceId(loaded: LoadedSetup, template: ResolvedGatewayCo
   return certificate.fingerprint256.replaceAll(':', '').toLowerCase()
 }
 
+/**
+ * Optional gateway override published by an external tunnel plugin.
+ *
+ * A random-hostname tunnel (for example a Cloudflare quick tunnel) cannot be
+ * described ahead of time through `publicOrigin`, because the hostname only
+ * exists once the tunnel is up. Such a plugin writes this file so the gateway
+ * can bind a fixed port and accept the tunnel's authority.
+ *
+ * `publicOrigin` carries the authority on purpose: the gateway derives its
+ * accepted authority from it, and a portless HTTPS origin normalizes to
+ * `<host>:443`, which is what an edge-terminated tunnel presents.
+ */
+export interface GatewayOverride {
+  readonly publicOrigin: string
+  readonly listenPort: number
+}
+
+/** Read and validate the optional gateway override file. */
+async function readGatewayOverride(file: string): Promise<GatewayOverride | undefined> {
+  let source: string
+  try {
+    const entry = await lstat(file)
+    if (!entry.isFile() || entry.isSymbolicLink() || entry.size > 8192) return undefined
+    source = await readFile(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  let parsed: unknown
+  try { parsed = JSON.parse(source) as unknown } catch { return undefined }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+  const record = parsed as Record<string, unknown>
+  const tls = record.tls
+  const tlsMode = typeof tls === 'object' && tls !== null ? (tls as Record<string, unknown>).mode : undefined
+  // An override may only produce the plaintext loopback listener that a TLS
+  // terminating tunnel expects; anything else would silently weaken the gateway.
+  if (tlsMode !== 'disabled') return undefined
+  const listenPort = record.listenPort
+  if (!Number.isSafeInteger(listenPort) || Number(listenPort) < 1 || Number(listenPort) > 65_535) return undefined
+  let origin: URL
+  try { origin = new URL(String(record.publicOrigin)) } catch { return undefined }
+  if (origin.protocol !== 'https:' || origin.port !== '' || origin.pathname !== '/'
+    || origin.search !== '' || origin.hash !== '' || origin.username !== '' || origin.password !== '') {
+    return undefined
+  }
+  return Object.freeze({ publicOrigin: origin.origin, listenPort: Number(listenPort) })
+}
+
 export function remoteGatewayConfig(
   template: ResolvedGatewayConfig,
   publicOrigin: string,
   stateFile: string,
   instanceId: string,
   listenPort = 0,
+  override?: GatewayOverride,
 ): ResolvedGatewayConfig {
-  const origin = new URL(publicOrigin)
+  const origin = new URL(override?.publicOrigin ?? publicOrigin)
   if (origin.protocol !== 'https:' || origin.username !== '' || origin.password !== ''
     || origin.pathname !== '/' || origin.search !== '' || origin.hash !== '') {
     throw new Error('remote public origin must be an HTTPS origin')
@@ -250,12 +299,14 @@ export function remoteGatewayConfig(
   // The gateway listens on an ephemeral loopback port behind Funnel, while the
   // public authority is HTTPS on 443. Keep that external port explicit so the
   // trust policy never substitutes the private listener port into QR URLs.
+  // An override pins the listener (a fixed-port tunnel needs that) and supplies
+  // the hostname it will present, so the authority still comes from the origin.
   const publicAuthority = origin.port === '' ? `${origin.hostname}:443` : origin.host
   const { pairingCaFile: _pairingCaFile, ...shared } = template
   return Object.freeze({
     ...shared,
     listenHost: '127.0.0.1',
-    listenPort,
+    listenPort: override?.listenPort ?? listenPort,
     authorities: Object.freeze([parseAuthority(publicAuthority)]),
     allowedCidrs: Object.freeze([parseCidr('127.0.0.0/8')]),
     stateFile,
@@ -430,6 +481,9 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     startRuntime,
   )
   const remoteDeviceFile = join(remoteDirectory, 'devices.json')
+  // Written on demand by an external tunnel plugin (e.g. a Cloudflare quick
+  // tunnel) that can only learn its public hostname at runtime.
+  const gatewayOverrideFile = join(remoteDirectory, 'gateway.json')
   const legacyCpolarDeviceFile = join(remoteDirectory, 'cpolar', 'devices.json')
   if (initialRemoteProvider === 'cpolar') {
     try {
@@ -442,12 +496,16 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     }
   }
   const createRemoteGateway = async (publicOrigin: string, listenPort = 0): Promise<MobileAccessGateway> => {
+      // An external tunnel plugin may pin the loopback listener and publish the
+      // hostname it will present; that takes precedence over the derived values.
+      const override = await readGatewayOverride(gatewayOverrideFile)
       const resolved = remoteGatewayConfig(
         template,
         publicOrigin,
         remoteDeviceFile,
         instanceId,
         listenPort,
+        override,
       )
       const candidate = new MobileAccessGateway(
         resolved,
