@@ -772,6 +772,188 @@ declare class FrpComponentManager {
   private enqueue;
 }
 //#endregion
+//#region src/cloudflared-component.d.ts
+/** Pinned cloudflared release. Versioned URLs keep the hashes stable, unlike `latest`. */
+declare const CLOUDFLARED_VERSION = "2026.9.1";
+/** One pinned cloudflared artifact for a supported desktop target. */
+interface CloudflaredArtifact {
+  readonly platform: NodeJS.Platform;
+  readonly arch: string;
+  readonly downloadUrl: string;
+  readonly downloadBytes: number;
+  readonly downloadSha256: string;
+  readonly executableName: string;
+  readonly allowedDownloadHosts: readonly string[];
+}
+/**
+ * Pinned cloudflared artifacts for the supported desktop targets.
+ *
+ * These use VERSIONED release URLs. `latest/download/...` is a rolling pointer, so
+ * its bytes — and therefore the hash — change whenever Cloudflare ships a release,
+ * and a pin there would reject the next download with no warning. Sizes and hashes
+ * were recorded from the official assets for {@link CLOUDFLARED_VERSION}.
+ *
+ * `win32-arm64` is intentionally absent: Cloudflare publishes no Windows arm64
+ * build for this release, so `supported` reports false on that target.
+ */
+declare const CLOUDFLARED_RELEASES: Readonly<Record<string, CloudflaredArtifact>>;
+/** Public, credential-free description of the managed cloudflared binary. */
+interface CloudflaredComponentStatus {
+  readonly supported: boolean;
+  readonly installed: boolean;
+  readonly version: string;
+  readonly downloadBytes: number;
+  readonly installedBytes: number;
+  readonly sourceUrl: string;
+  readonly releasePage: string;
+  readonly storagePath: string;
+  readonly errorCode?: string;
+}
+interface CloudflaredComponentOptions {
+  readonly stateDirectory: string;
+  readonly platform?: NodeJS.Platform;
+  readonly arch?: string;
+  readonly fetchArtifact?: (artifact: CloudflaredArtifact, signal: AbortSignal) => Promise<Uint8Array>;
+  readonly inspectExecutable?: (executable: string) => Promise<string>;
+}
+/** `cloudflared --version` prints `cloudflared version <ver> (built …)`. */
+declare function parseCloudflaredVersion(output: string): string | undefined;
+/** Owns the optional pinned cloudflared binary inside the DSH Mobile state directory. */
+declare class CloudflaredComponentManager {
+  readonly executable: string;
+  readonly componentRoot: string;
+  readonly logRoot: string;
+  private readonly componentStorage;
+  private readonly stagingRoot;
+  private readonly artifact;
+  private readonly fetchArtifact;
+  private readonly inspectExecutable;
+  private installed;
+  private installedBytes;
+  private version;
+  private errorCode;
+  private queue;
+  constructor(options: CloudflaredComponentOptions);
+  /** Inspect the managed binary without trusting a global installation. */
+  initialize(): Promise<void>;
+  /** Return component metadata without exposing configuration. */
+  status(): CloudflaredComponentStatus;
+  /** Download, verify, and install the binary after explicit user confirmation. */
+  install(): Promise<CloudflaredComponentStatus>;
+  /** Replace the installed binary with a verified candidate. */
+  private publish;
+  /** Remove this component's executable and staging files. */
+  purge(): Promise<CloudflaredComponentStatus>;
+  private enqueue;
+}
+//#endregion
+//#region src/remote.d.ts
+/** Remote transports supported by the desktop plugin and Android client. */
+type RemoteProvider = 'tailscale' | 'cpolar' | 'frp' | 'cloudflare';
+/** Remote transports selectable in the desktop panel. */
+type RemoteProviderChoice = RemoteProvider | 'chmlfrp';
+/** Common safe status returned by every remote provider controller. */
+interface RemoteProviderStatus {
+  readonly enabled: boolean;
+  readonly state: string;
+  readonly origin?: string;
+  readonly loginUrl?: string;
+  readonly setupUrl?: string;
+  readonly errorCode?: string;
+}
+/** Lifecycle shared by selectable remote providers. */
+interface RemoteProviderController {
+  initialize(): Promise<void>;
+  gateway(): MobileAccessGateway | undefined;
+  status(): RemoteProviderStatus;
+  setEnabled(enabled: boolean): Promise<RemoteProviderStatus>;
+  reconnect(): Promise<RemoteProviderStatus>;
+  reset(): Promise<RemoteProviderStatus>;
+  close(): Promise<void>;
+}
+/** Durable selection for the single active remote transport. */
+interface RemoteProviderState {
+  readonly version: 1;
+  readonly provider: RemoteProviderChoice;
+}
+/** Validate the provider selection loaded across the filesystem boundary. */
+declare function parseRemoteProviderState(value: unknown): RemoteProviderState;
+/** Atomic selection store whose absent-file state uses the configured default. */
+declare class JsonRemoteProviderStore {
+  private readonly file;
+  private readonly defaultProvider;
+  constructor(file: string, defaultProvider: RemoteProviderChoice);
+  load(): Promise<RemoteProviderState>;
+  save(state: RemoteProviderState): Promise<void>;
+}
+/** Resolve the first-run provider without letting environment values bypass validation. */
+declare function configuredRemoteProvider(environment: NodeJS.ProcessEnv): RemoteProviderChoice;
+//#endregion
+//#region src/cloudflare.d.ts
+/** Product-facing states for the Cloudflare quick-tunnel transport. */
+type CloudflareState = 'off' | 'unavailable' | 'starting' | 'connecting' | 'ready' | 'error';
+/** Safe state returned only through the loopback DSH control route. */
+interface CloudflareStatus extends RemoteProviderStatus {}
+/** Inputs for one managed cloudflared quick tunnel and its DSH gateway. */
+interface CloudflareControllerOptions {
+  readonly store: MobileAccessControlStore;
+  readonly executable: string;
+  readonly instanceId: string;
+  readonly createGateway: (origin: string, listenPort?: number) => Promise<MobileAccessGateway>;
+  readonly onStatus?: (status: CloudflareStatus) => void;
+  readonly launchClient?: (executable: string, listenPort: number) => ChildProcessWithoutNullStreams;
+  readonly probeDiscovery?: (origin: string, expectedInstanceId: string, signal: AbortSignal) => Promise<boolean>;
+  readonly startTimeoutMs?: number;
+  readonly retryIntervalMs?: number;
+}
+/** Extract the quick-tunnel public origin from one line of cloudflared output. */
+declare function parseQuickTunnelOrigin(line: string): string | undefined;
+/**
+ * Cloudflare quick-tunnel transport for the DSH gateway.
+ *
+ * A quick tunnel is the only supported remote transport that needs no account, no
+ * own domain and no server: cloudflared dials out to Cloudflare's edge and the
+ * public hostname is assigned at runtime. Two properties make it fit this gateway
+ * without any special casing:
+ *
+ * - Cloudflare terminates TLS on 443, so the loopback listener stays plaintext and
+ *   the public origin is a portless HTTPS URL — exactly what the gateway expects.
+ * - cloudflared forwards the original Host header, so the request carries the
+ *   tunnel hostname, which the gateway accepts because its authority derives from
+ *   the same public origin.
+ *
+ * The hostname is therefore only known after cloudflared announces it, which is why
+ * the gateway is created after the announcement rather than before.
+ */
+declare class CloudflareController implements RemoteProviderController {
+  private readonly options;
+  private enabled;
+  private initialized;
+  private disposed;
+  private child;
+  private gatewayValue;
+  private generation;
+  private latest;
+  private queue;
+  private startupAbort;
+  constructor(options: CloudflareControllerOptions);
+  /** Restore the remembered switch. A quick tunnel never resumes its old hostname. */
+  initialize(): Promise<void>;
+  gateway(): MobileAccessGateway | undefined;
+  status(): CloudflareStatus;
+  setEnabled(enabled: boolean): Promise<CloudflareStatus>;
+  reconnect(): Promise<CloudflareStatus>;
+  reset(): Promise<CloudflareStatus>;
+  close(): Promise<void>;
+  private enqueue;
+  private publish;
+  private start;
+  private waitForDiscovery;
+  private failGeneration;
+  private stop;
+  private stopProcessAndGateway;
+}
+//#endregion
 //#region src/frp-template.d.ts
 /** Loopback-only HTTP vhost port used between Caddy and frps. */
 declare const FRP_VHOST_HTTP_PORT = 7080;
@@ -940,48 +1122,6 @@ declare class FrpConfigStore {
   removeRuntimeConfig(): Promise<void>;
 }
 //#endregion
-//#region src/remote.d.ts
-/** Remote transports supported by the desktop plugin and Android client. */
-type RemoteProvider = 'tailscale' | 'cpolar' | 'frp';
-/** Remote transports selectable in the desktop panel. */
-type RemoteProviderChoice = RemoteProvider | 'chmlfrp';
-/** Common safe status returned by every remote provider controller. */
-interface RemoteProviderStatus {
-  readonly enabled: boolean;
-  readonly state: string;
-  readonly origin?: string;
-  readonly loginUrl?: string;
-  readonly setupUrl?: string;
-  readonly errorCode?: string;
-}
-/** Lifecycle shared by selectable remote providers. */
-interface RemoteProviderController {
-  initialize(): Promise<void>;
-  gateway(): MobileAccessGateway | undefined;
-  status(): RemoteProviderStatus;
-  setEnabled(enabled: boolean): Promise<RemoteProviderStatus>;
-  reconnect(): Promise<RemoteProviderStatus>;
-  reset(): Promise<RemoteProviderStatus>;
-  close(): Promise<void>;
-}
-/** Durable selection for the single active remote transport. */
-interface RemoteProviderState {
-  readonly version: 1;
-  readonly provider: RemoteProviderChoice;
-}
-/** Validate the provider selection loaded across the filesystem boundary. */
-declare function parseRemoteProviderState(value: unknown): RemoteProviderState;
-/** Atomic selection store whose absent-file state uses the configured default. */
-declare class JsonRemoteProviderStore {
-  private readonly file;
-  private readonly defaultProvider;
-  constructor(file: string, defaultProvider: RemoteProviderChoice);
-  load(): Promise<RemoteProviderState>;
-  save(state: RemoteProviderState): Promise<void>;
-}
-/** Resolve the first-run provider without letting environment values bypass validation. */
-declare function configuredRemoteProvider(environment: NodeJS.ProcessEnv): RemoteProviderChoice;
-//#endregion
 //#region src/frp.d.ts
 /** Product-facing states for the restricted self-hosted FRP transport. */
 type FrpState = 'off' | 'unavailable' | 'starting' | 'connecting' | 'ready' | 'error';
@@ -1130,5 +1270,5 @@ declare const inject: string[];
 /** Mount the resident control route and its optional authenticated LAN gateway. */
 declare function apply(ctx: Context, config: PluginConfig): Promise<void>;
 //#endregion
-export { AUTH_PREFIX, AccessController, type AccessControllerOptions, AccessError, type AuthoritySpec, type BlockedUpgradePathEntry, BlockedUpgradePathLog, BoundedRateLimiter, CHMLFRP_COMPONENT_RELEASES, CHMLFRP_VERSION, CSRF_COOKIE, CSRF_HEADER, type ChmlFrpSettings, Config, FRP_VHOST_HTTP_PORT as DEFAULT_VHOST_HTTP_PORT, FRP_VHOST_HTTP_PORT, DEVICE_COOKIE, type DeviceSnapshot, type DeviceStore, type DeviceSummary, type DisabledTlsConfig, EXTENSION_LIMITS, FRP_CADDY_IMPORT_LINE, FRP_CADDY_SNIPPET_MARKER, FRP_CADDY_SNIPPET_PATH, FRP_COMPONENT_RELEASES, FrpComponentManager, type FrpComponentStatus, type FrpComponentVariant, FrpConfigStore, type FrpConfigurationStatus, FrpController, type FrpControllerOptions, type FrpSettings, type FrpState, type FrpStatus, type FrpTransportSettings, JsonDeviceStore, JsonMobileAccessControlStore, JsonRemoteProviderStore, LOCAL_ADMIN_PREFIX, type LocalExtensionManifest, MAX_BLOCKED_UPGRADE_PATHS, MAX_EXTRA_WEBSOCKET_PATHS, MAX_WEBSOCKET_PATH_LENGTH, MemoryDeviceStore, type MobileAccessControlState, type MobileAccessControlStore, MobileAccessGateway, MobileAccessGatewayController, type MobileAccessService as MobileAccessRegistry, MobileAccessService, type MobileAccessRuntime, type MobileActionContext, type MobileExtensionClientEntry, type MobileExtensionDefinition, MobileExtensionError, type MobileExtensionManifest, type MobileExtensionStatus, type MobileHostAction, type MobileHostRoute, type MobileRouteRequest, type MobileRouteResponse, type PairingResult, type ParsedCidr, type PluginConfig, type ProvidedTlsConfig, type RemoteProvider, type RemoteProviderController, type RemoteProviderState, type RemoteProviderStatus, type RenewalResult, RequestTrustPolicy, type ResolvedGatewayConfig, SESSION_COOKIE, type SessionAuthorization, type StoredDevice, TASK_EVENT_DEBOUNCE_MS, type TaskCompletionEvent, type TaskEventContext, TaskEventHub, type TaskEventSession, type TaskEventSink, type TaskEventWatcherOptions, type TaskTurnEvent, type TlsConfig, WS_PATHS, WebSocketPathStore, addressAllowed, apply, assertExtensionId, bindChmlFrpIniLocalPort, configuredRemoteProvider, createCaddySite, createChmlFrpIni, createFrpServerTemplate, createFrpcToml, createMobileAccessService, createRestrictedFrpServerTemplate, inject, isGloballyRoutableIpv4, isLoopbackAddress, mergeSavedChmlFrpSettings, mergeSavedFrpSettings, mergeSavedFrpTarget, name, normalizeWebSocketPaths, parseAuthority, parseChmlFrpIni, parseChmlFrpSettings, parseCidr, parseControlFile, parseDeviceSnapshot, parseExtensionManifest, parseFrpSettings, parseFrpTransportSettings, parseGatewayConfig, parseMobileAccessControlState, parseRemoteProviderState, resolveAuthority, rewriteMobileIndex, validateChmlFrpUser, validateFrpPublicOrigin, validateFrpServerAddress, validateFrpServerPort, validateFrpToken, validateWebSocketPath, watchTaskCompletions };
+export { AUTH_PREFIX, AccessController, type AccessControllerOptions, AccessError, type AuthoritySpec, type BlockedUpgradePathEntry, BlockedUpgradePathLog, BoundedRateLimiter, CHMLFRP_COMPONENT_RELEASES, CHMLFRP_VERSION, CLOUDFLARED_RELEASES, CLOUDFLARED_VERSION, CSRF_COOKIE, CSRF_HEADER, type ChmlFrpSettings, CloudflareController, type CloudflareControllerOptions, type CloudflareState, type CloudflareStatus, CloudflaredComponentManager, type CloudflaredComponentStatus, Config, FRP_VHOST_HTTP_PORT as DEFAULT_VHOST_HTTP_PORT, FRP_VHOST_HTTP_PORT, DEVICE_COOKIE, type DeviceSnapshot, type DeviceStore, type DeviceSummary, type DisabledTlsConfig, EXTENSION_LIMITS, FRP_CADDY_IMPORT_LINE, FRP_CADDY_SNIPPET_MARKER, FRP_CADDY_SNIPPET_PATH, FRP_COMPONENT_RELEASES, FrpComponentManager, type FrpComponentStatus, type FrpComponentVariant, FrpConfigStore, type FrpConfigurationStatus, FrpController, type FrpControllerOptions, type FrpSettings, type FrpState, type FrpStatus, type FrpTransportSettings, JsonDeviceStore, JsonMobileAccessControlStore, JsonRemoteProviderStore, LOCAL_ADMIN_PREFIX, type LocalExtensionManifest, MAX_BLOCKED_UPGRADE_PATHS, MAX_EXTRA_WEBSOCKET_PATHS, MAX_WEBSOCKET_PATH_LENGTH, MemoryDeviceStore, type MobileAccessControlState, type MobileAccessControlStore, MobileAccessGateway, MobileAccessGatewayController, type MobileAccessService as MobileAccessRegistry, MobileAccessService, type MobileAccessRuntime, type MobileActionContext, type MobileExtensionClientEntry, type MobileExtensionDefinition, MobileExtensionError, type MobileExtensionManifest, type MobileExtensionStatus, type MobileHostAction, type MobileHostRoute, type MobileRouteRequest, type MobileRouteResponse, type PairingResult, type ParsedCidr, type PluginConfig, type ProvidedTlsConfig, type RemoteProvider, type RemoteProviderController, type RemoteProviderState, type RemoteProviderStatus, type RenewalResult, RequestTrustPolicy, type ResolvedGatewayConfig, SESSION_COOKIE, type SessionAuthorization, type StoredDevice, TASK_EVENT_DEBOUNCE_MS, type TaskCompletionEvent, type TaskEventContext, TaskEventHub, type TaskEventSession, type TaskEventSink, type TaskEventWatcherOptions, type TaskTurnEvent, type TlsConfig, WS_PATHS, WebSocketPathStore, addressAllowed, apply, assertExtensionId, bindChmlFrpIniLocalPort, configuredRemoteProvider, createCaddySite, createChmlFrpIni, createFrpServerTemplate, createFrpcToml, createMobileAccessService, createRestrictedFrpServerTemplate, inject, isGloballyRoutableIpv4, isLoopbackAddress, mergeSavedChmlFrpSettings, mergeSavedFrpSettings, mergeSavedFrpTarget, name, normalizeWebSocketPaths, parseAuthority, parseChmlFrpIni, parseChmlFrpSettings, parseCidr, parseCloudflaredVersion, parseControlFile, parseDeviceSnapshot, parseExtensionManifest, parseFrpSettings, parseFrpTransportSettings, parseGatewayConfig, parseMobileAccessControlState, parseQuickTunnelOrigin, parseRemoteProviderState, resolveAuthority, rewriteMobileIndex, validateChmlFrpUser, validateFrpPublicOrigin, validateFrpServerAddress, validateFrpServerPort, validateFrpToken, validateWebSocketPath, watchTaskCompletions };
 //# sourceMappingURL=index.d.mts.map

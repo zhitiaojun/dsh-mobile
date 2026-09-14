@@ -78,6 +78,15 @@ export {
 export type { DeviceSnapshot, DeviceStore, StoredDevice } from './storage.js'
 export { CHMLFRP_COMPONENT_RELEASES, CHMLFRP_VERSION, FRP_COMPONENT_RELEASES, FrpComponentManager } from './frp-component.js'
 export {
+  CLOUDFLARED_RELEASES,
+  CLOUDFLARED_VERSION,
+  CloudflaredComponentManager,
+  parseCloudflaredVersion,
+} from './cloudflared-component.js'
+export type { CloudflaredComponentStatus } from './cloudflared-component.js'
+export { CloudflareController, parseQuickTunnelOrigin } from './cloudflare.js'
+export type { CloudflareControllerOptions, CloudflareState, CloudflareStatus } from './cloudflare.js'
+export {
   BlockedUpgradePathLog,
   MAX_BLOCKED_UPGRADE_PATHS,
   MAX_EXTRA_WEBSOCKET_PATHS,

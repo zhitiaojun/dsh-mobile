@@ -420,7 +420,26 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const chmlfrpPurge = element('button', 'dsh-mobile-control__danger'); chmlfrpPurge.type = 'button'; chmlfrpPurge.textContent = t('chmlfrpPurge')
   chmlfrpBody.append(chmlfrpComponentStatus, chmlfrpInstall, chmlfrpIniLabel, chmlfrpStatus, chmlfrpConfigure, chmlfrpPurge)
   chmlfrp.append(chmlfrpSummary, chmlfrpBody)
-  providerSection.append(providerHeading, providerInfo, providerChoices, selfHosted, chmlfrp)
+  // ---- Cloudflare quick tunnel: no account, no domain, hostname assigned at runtime.
+  const cloudflare = element('details', 'dsh-mobile-control__self-hosted')
+  const cloudflareSummary = element('summary', 'dsh-mobile-control__self-hosted-summary')
+  const cloudflareSummaryText = element('span')
+  const cloudflareSummaryTitle = element('strong'); cloudflareSummaryTitle.textContent = t('cloudflareName')
+  const cloudflareSummaryDescription = element('span'); cloudflareSummaryDescription.textContent = t('cloudflareDescription')
+  const cloudflareBadge = element('span', 'dsh-mobile-control__provider-badge is-frp'); cloudflareBadge.textContent = t('advanced')
+  cloudflareSummaryText.append(cloudflareSummaryTitle, cloudflareSummaryDescription)
+  cloudflareSummary.append(cloudflareSummaryText, cloudflareBadge)
+  const cloudflareBody = element('div', 'dsh-mobile-control__self-hosted-body')
+  const cloudflareComponentStatus = element('p', 'dsh-mobile-control__component-status'); cloudflareComponentStatus.textContent = t('checkingComponent')
+  const cloudflareInstall = element('button', 'dsh-mobile-control__primary dsh-mobile-control__frp-action'); cloudflareInstall.type = 'button'; cloudflareInstall.textContent = t('cloudflareInstallClient')
+  const cloudflareNote = element('p', 'dsh-mobile-control__frp-requirement'); cloudflareNote.textContent = t('cloudflareQuickNote')
+  const cloudflareStatus = element('p', 'dsh-mobile-control__component-status'); cloudflareStatus.textContent = t('frpConfigurationMissing')
+  const cloudflareOrigin = element('code', 'dsh-mobile-control__storage'); cloudflareOrigin.textContent = ''
+  const cloudflareConnect = element('button', 'dsh-mobile-control__primary dsh-mobile-control__frp-action'); cloudflareConnect.type = 'button'; cloudflareConnect.textContent = t('saveConnect')
+  const cloudflarePurge = element('button', 'dsh-mobile-control__danger'); cloudflarePurge.type = 'button'; cloudflarePurge.textContent = t('cloudflarePurge')
+  cloudflareBody.append(cloudflareComponentStatus, cloudflareInstall, cloudflareNote, cloudflareStatus, cloudflareOrigin, cloudflareConnect, cloudflarePurge)
+  cloudflare.append(cloudflareSummary, cloudflareBody)
+  providerSection.append(providerHeading, providerInfo, providerChoices, selfHosted, chmlfrp, cloudflare)
   const frpSetup = element('section', 'dsh-mobile-control__frp-setup'); frpSetup.hidden = true
   const frpSetupTitle = element('h3', 'dsh-mobile-control__section-title'); frpSetupTitle.textContent = t('prepareFrp')
   const frpStep1 = element('section', 'dsh-mobile-control__frp-step')
@@ -734,8 +753,12 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   let chmlfrpInstalled = false
   let chmlfrpConfigured = false
   let chmlfrpDownloadSize = '5.4'
+  let cloudflareInstalled = false
+  let cloudflareDownloadSize = '52.4'
   /** Pinned ChmlFrp client version shown in confirmations; mirrors FRP_COMPONENT releases. */
   const chmlfrpClientVersion = 'ChmlFrp-0.51.2_251023'
+  /** Pinned cloudflared version shown in confirmations; mirrors CLOUDFLARED_VERSION. */
+  const cloudflareClientVersion = '2026.9.1'
   let configuredFrpServer = ''
   let configuredFrpPort = 7000
   let configuredFrpOrigin = ''
@@ -1032,6 +1055,36 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     chmlfrpBadge.textContent = chmlfrpConfigured && chmlfrpInstalled ? t('ready') : t('advanced')
     chmlfrpSummary.textContent = ''
     chmlfrpSummary.append(chmlfrpSummaryText, chmlfrpBadge)
+    const cloudflareProvider = providers.cloudflare !== null && typeof providers.cloudflare === 'object'
+      ? providers.cloudflare as Record<string, unknown>
+      : {}
+    const cloudflareComponent = cloudflareProvider.component !== null && typeof cloudflareProvider.component === 'object'
+      ? cloudflareProvider.component as Record<string, unknown>
+      : {}
+    cloudflareInstalled = cloudflareComponent.installed === true
+    const cloudflareSupported = cloudflareComponent.supported !== false
+    const cloudflareVersion = typeof cloudflareComponent.version === 'string' ? cloudflareComponent.version : ''
+    const cloudflareBytes = typeof cloudflareComponent.downloadBytes === 'number' ? cloudflareComponent.downloadBytes : 0
+    if (cloudflareBytes > 0) cloudflareDownloadSize = formatMegabytes(cloudflareBytes)
+    const cloudflareRunning = cloudflareProvider.running === true
+    const cloudflarePublicOrigin = typeof cloudflareProvider.origin === 'string' ? cloudflareProvider.origin : ''
+    cloudflareInstall.hidden = cloudflareInstalled || !cloudflareSupported
+    cloudflareInstall.textContent = cloudflareBytes > 0
+      ? t('installWithSize', { size: formatMegabytes(cloudflareBytes) })
+      : t('cloudflareInstallClient')
+    cloudflareInstall.disabled = remoteProviderBusy
+    cloudflareConnect.disabled = remoteProviderBusy || !cloudflareInstalled
+    cloudflarePurge.hidden = !cloudflareInstalled
+    cloudflareComponentStatus.textContent = !cloudflareSupported
+      ? t('frpUnsupported')
+      : cloudflareInstalled ? t('cloudflareClientReady', { version: cloudflareVersion }) : t('cloudflareClientMissing')
+    cloudflareStatus.textContent = cloudflareRunning
+      ? (cloudflareProvider.state === 'ready' ? t('ready') : String(cloudflareProvider.state ?? ''))
+      : t('frpConfigurationMissing')
+    cloudflareOrigin.textContent = cloudflarePublicOrigin
+    cloudflareOrigin.title = cloudflarePublicOrigin
+    cloudflareBadge.textContent = cloudflareRunning && cloudflarePublicOrigin !== '' ? t('ready') : t('advanced')
+    cloudflareConnect.textContent = cloudflareRunning ? t('reconnect') : t('saveConnect')
     if (!frpLayoutInitialized) {
       frpConnectionGroup.open = !frpConfigured
       frpComponentGroup.open = !frpInstalled
@@ -1541,6 +1594,42 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     void controlRequestJson('/api/mobile-access/remote/chmlfrp/component/purge', { method: 'POST', body: JSON.stringify({ confirm: true }) }, LONG_CONTROL_REQUEST_TIMEOUT_MS)
       .then(renderRemote, error => { remoteStatus.textContent = t('purgeFailed', { error: String(error) }) })
       .finally(() => { remoteProviderBusy = false; chmlfrpPurge.disabled = false; loadRemote() })
+  })
+  cloudflareInstall.addEventListener('click', () => {
+    if (remoteProviderBusy) return
+    const accepted = window.confirm(t('cloudflareInstallConfirm', { version: cloudflareClientVersion, size: cloudflareDownloadSize }))
+    if (!accepted) return
+    remoteProviderBusy = true
+    cloudflareInstall.disabled = true
+    cloudflareInstall.textContent = t('downloading')
+    remoteStatus.textContent = t('installingFrp')
+    void controlRequestJson('/api/mobile-access/remote/cloudflare/component/install', { method: 'POST', body: JSON.stringify({ confirm: true }) }, LONG_CONTROL_REQUEST_TIMEOUT_MS)
+      .then(renderRemote, error => { remoteStatus.textContent = t('installFailed', { error: String(error) }) })
+      .finally(() => { remoteProviderBusy = false; loadRemote() })
+  })
+  cloudflareConnect.addEventListener('click', () => {
+    if (remoteProviderBusy || !cloudflareInstalled) return
+    remoteProviderBusy = true
+    cloudflareConnect.disabled = true
+    cloudflareConnect.setAttribute('aria-busy', 'true')
+    cloudflareConnect.textContent = t('saving')
+    void controlRequestJson('/api/mobile-access/remote/provider', { method: 'POST', body: JSON.stringify({ provider: 'cloudflare' }) })
+      .then(() => controlRequestJson('/api/mobile-access/remote/control', { method: 'POST', body: JSON.stringify({ running: true }) }))
+      .then(renderRemote, error => { remoteStatus.textContent = t('configureFailed', { error: String(error) }) })
+      .finally(() => {
+        remoteProviderBusy = false
+        cloudflareConnect.setAttribute('aria-busy', 'false')
+        loadRemote()
+      })
+  })
+  cloudflarePurge.addEventListener('click', () => {
+    if (remoteProviderBusy || !window.confirm(t('cloudflarePurgeConfirm'))) return
+    remoteProviderBusy = true
+    cloudflarePurge.disabled = true
+    remoteStatus.textContent = t('purgingFrp')
+    void controlRequestJson('/api/mobile-access/remote/cloudflare/component/purge', { method: 'POST', body: JSON.stringify({ confirm: true }) }, LONG_CONTROL_REQUEST_TIMEOUT_MS)
+      .then(renderRemote, error => { remoteStatus.textContent = t('purgeFailed', { error: String(error) }) })
+      .finally(() => { remoteProviderBusy = false; cloudflarePurge.disabled = false; loadRemote() })
   })
   remoteToggle.addEventListener('click', () => {
     remoteToggle.disabled = true

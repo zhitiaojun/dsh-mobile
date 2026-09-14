@@ -54,7 +54,8 @@ describe('remote provider selection', () => {
     expect(configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'frp' })).toBe('frp')
     // ChmlFrp is a panel choice backed by the FRP controller.
     expect(configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'chmlfrp' })).toBe('chmlfrp')
-    expect(() => configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'invalid' })).toThrow('must be tailscale, cpolar, frp, or chmlfrp')
+    expect(configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'cloudflare' })).toBe('cloudflare')
+    expect(() => configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'invalid' })).toThrow('must be tailscale, cpolar, frp, chmlfrp, or cloudflare')
 
     const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-remote-provider-'))
     temporaryDirectories.push(directory)
@@ -70,6 +71,7 @@ describe('remote provider selection', () => {
       tailscale: new FakeRemoteController(),
       cpolar: new FakeRemoteController(),
       frp: new FakeRemoteController(),
+      cloudflare: new FakeRemoteController(),
     }
     const saved: string[] = []
     const coordinator = new RemoteProviderCoordinator('tailscale', controllers, {
@@ -102,6 +104,7 @@ describe('remote provider selection', () => {
       tailscale: new FakeRemoteController(),
       cpolar: new FakeRemoteController(),
       frp: new FakeRemoteController(),
+      cloudflare: new FakeRemoteController(),
     }
     controllers.cpolar.enabled = true
     const coordinator = new RemoteProviderCoordinator('tailscale', controllers, { save: async () => {} })

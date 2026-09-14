@@ -6,7 +6,7 @@ import type { MobileAccessGateway } from './gateway.js'
 import { restrictPrivateFile } from './private-file.js'
 
 /** Remote transports supported by the desktop plugin and Android client. */
-export type RemoteProvider = 'tailscale' | 'cpolar' | 'frp'
+export type RemoteProvider = 'tailscale' | 'cpolar' | 'frp' | 'cloudflare'
 
 /** Remote transports selectable in the desktop panel. */
 export type RemoteProviderChoice = RemoteProvider | 'chmlfrp'
@@ -17,7 +17,7 @@ export type RemoteProviderChoice = RemoteProvider | 'chmlfrp'
  * saved settings; only their client binary, config schema, and setup flow differ.
  */
 export const REMOTE_PROVIDER_CHOICES: readonly RemoteProviderChoice[] = Object.freeze([
-  'tailscale', 'cpolar', 'frp', 'chmlfrp',
+  'tailscale', 'cpolar', 'frp', 'chmlfrp', 'cloudflare',
 ])
 
 /** Resolve the controller that owns a panel choice. */
@@ -52,10 +52,11 @@ export interface RemoteProviderState {
   readonly provider: RemoteProviderChoice
 }
 
-const REMOTE_PROVIDERS: readonly RemoteProvider[] = ['tailscale', 'cpolar', 'frp']
+const REMOTE_PROVIDERS: readonly RemoteProvider[] = ['tailscale', 'cpolar', 'frp', 'cloudflare']
 
 function isProviderChoice(value: unknown): value is RemoteProviderChoice {
-  return value === 'tailscale' || value === 'cpolar' || value === 'frp' || value === 'chmlfrp'
+  return value === 'tailscale' || value === 'cpolar' || value === 'frp'
+    || value === 'chmlfrp' || value === 'cloudflare'
 }
 
 /** Persist only the selected remote provider. */
@@ -277,6 +278,6 @@ export class JsonRemoteProviderStore {
 /** Resolve the first-run provider without letting environment values bypass validation. */
 export function configuredRemoteProvider(environment: NodeJS.ProcessEnv): RemoteProviderChoice {
   const value = environment.DSH_MOBILE_REMOTE_PROVIDER ?? 'tailscale'
-  if (value === 'tailscale' || value === 'cpolar' || value === 'frp' || value === 'chmlfrp') return value
-  throw new Error('DSH_MOBILE_REMOTE_PROVIDER must be tailscale, cpolar, frp, or chmlfrp')
+  if (isProviderChoice(value)) return value
+  throw new Error('DSH_MOBILE_REMOTE_PROVIDER must be tailscale, cpolar, frp, chmlfrp, or cloudflare')
 }
