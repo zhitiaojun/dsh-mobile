@@ -76,7 +76,7 @@ export {
   parseDeviceSnapshot,
 } from './storage.js'
 export type { DeviceSnapshot, DeviceStore, StoredDevice } from './storage.js'
-export { FRP_COMPONENT_RELEASES, FrpComponentManager } from './frp-component.js'
+export { CHMLFRP_COMPONENT_RELEASES, CHMLFRP_VERSION, FRP_COMPONENT_RELEASES, FrpComponentManager } from './frp-component.js'
 export {
   BlockedUpgradePathLog,
   MAX_BLOCKED_UPGRADE_PATHS,
@@ -87,15 +87,22 @@ export {
   WebSocketPathStore,
 } from './websocket-paths.js'
 export type { BlockedUpgradePathEntry } from './websocket-paths.js'
-export type { FrpComponentStatus } from './frp-component.js'
+export type { FrpComponentStatus, FrpComponentVariant } from './frp-component.js'
 export {
+  bindChmlFrpIniLocalPort,
   DEFAULT_VHOST_HTTP_PORT,
   FrpConfigStore,
+  createChmlFrpIni,
   createFrpServerTemplate,
   createFrpcToml,
+  mergeSavedChmlFrpSettings,
   mergeSavedFrpSettings,
   mergeSavedFrpTarget,
+  parseChmlFrpIni,
+  parseChmlFrpSettings,
   parseFrpSettings,
+  parseFrpTransportSettings,
+  validateChmlFrpUser,
   validateFrpPublicOrigin,
   validateFrpServerAddress,
   validateFrpServerPort,
@@ -109,7 +116,7 @@ export {
   createRestrictedFrpServerTemplate,
   FRP_VHOST_HTTP_PORT,
 } from './frp-template.js'
-export type { FrpConfigurationStatus, FrpSettings } from './frp-config.js'
+export type { FrpConfigurationStatus, FrpSettings, FrpTransportSettings, ChmlFrpSettings } from './frp-config.js'
 export { FrpController } from './frp.js'
 export type { FrpControllerOptions, FrpState, FrpStatus } from './frp.js'
 export { configuredRemoteProvider, JsonRemoteProviderStore, parseRemoteProviderState } from './remote.js'

@@ -8,6 +8,23 @@ import { restrictPrivateFile } from './private-file.js'
 /** Remote transports supported by the desktop plugin and Android client. */
 export type RemoteProvider = 'tailscale' | 'cpolar' | 'frp'
 
+/** Remote transports selectable in the desktop panel. */
+export type RemoteProviderChoice = RemoteProvider | 'chmlfrp'
+
+/**
+ * Panel choices map onto the underlying controllers. ChmlFrp and the self-hosted
+ * frps share one controller because both are FRP dialects driven by the same
+ * saved settings; only their client binary, config schema, and setup flow differ.
+ */
+export const REMOTE_PROVIDER_CHOICES: readonly RemoteProviderChoice[] = Object.freeze([
+  'tailscale', 'cpolar', 'frp', 'chmlfrp',
+])
+
+/** Resolve the controller that owns a panel choice. */
+export function controllerForChoice(choice: RemoteProviderChoice): RemoteProvider {
+  return choice === 'chmlfrp' ? 'frp' : choice
+}
+
 /** Common safe status returned by every remote provider controller. */
 export interface RemoteProviderStatus {
   readonly enabled: boolean
@@ -32,10 +49,14 @@ export interface RemoteProviderController {
 /** Durable selection for the single active remote transport. */
 export interface RemoteProviderState {
   readonly version: 1
-  readonly provider: RemoteProvider
+  readonly provider: RemoteProviderChoice
 }
 
 const REMOTE_PROVIDERS: readonly RemoteProvider[] = ['tailscale', 'cpolar', 'frp']
+
+function isProviderChoice(value: unknown): value is RemoteProviderChoice {
+  return value === 'tailscale' || value === 'cpolar' || value === 'frp' || value === 'chmlfrp'
+}
 
 /** Persist only the selected remote provider. */
 export interface RemoteProviderStore {
@@ -66,25 +87,30 @@ export async function settleRemoteResources(
  * Operations read the selected controller only after reaching the front of the queue.
  */
 export class RemoteProviderCoordinator {
-  private selectedValue: RemoteProvider
+  private selectedValue: RemoteProviderChoice
   private queue: Promise<void> = Promise.resolve()
 
   constructor(
-    selected: RemoteProvider,
+    selected: RemoteProviderChoice,
     private readonly controllers: Readonly<Record<RemoteProvider, RemoteProviderController>>,
     private readonly store: RemoteProviderStore,
   ) {
     this.selectedValue = selected
   }
 
-  /** Return the durable provider currently selected by the desktop UI. */
-  get selected(): RemoteProvider {
+  /** Return the durable provider choice currently selected by the desktop UI. */
+  get selected(): RemoteProviderChoice {
     return this.selectedValue
+  }
+
+  /** Return the controller backing a choice (ChmlFrp shares the FRP controller). */
+  controllerFor(choice: RemoteProviderChoice): RemoteProviderController {
+    return this.controllers[controllerForChoice(choice)]
   }
 
   /** Return the controller selected when this method is called. */
   controller(): RemoteProviderController {
-    return this.controllers[this.selectedValue]
+    return this.controllerFor(this.selectedValue)
   }
 
   /** Run a provider-owned mutation after all earlier provider work settles. */
@@ -93,10 +119,10 @@ export class RemoteProviderCoordinator {
   }
 
   /** Disable the previous provider, persist the new selection, and retain rollback on write failure. */
-  select(provider: RemoteProvider): Promise<void> {
+  select(provider: RemoteProviderChoice): Promise<void> {
     return this.enqueue(async () => {
       if (provider === this.selectedValue) return
-      const previous = this.controllers[this.selectedValue]
+      const previous = this.controllerFor(this.selectedValue)
       const restore = previous.status().enabled
       if (restore) await previous.setEnabled(false)
       try {
@@ -125,9 +151,10 @@ export class RemoteProviderCoordinator {
     let value: T | undefined
     let operationError: unknown
     try { value = await operation() } catch (error) { operationError = error }
+    const affected = controllerForChoice(this.selectedValue)
     const results = await Promise.allSettled(
       REMOTE_PROVIDERS
-        .filter(provider => provider !== this.selectedValue)
+        .filter(provider => provider !== affected)
         .map(provider => this.controllers[provider].setEnabled(false)),
     )
     const errors = [
@@ -191,7 +218,7 @@ export function parseRemoteProviderState(value: unknown): RemoteProviderState {
   }
   const record = value as Record<string, unknown>
   if (record.version !== 1
-    || (record.provider !== 'tailscale' && record.provider !== 'cpolar' && record.provider !== 'frp')
+    || !isProviderChoice(record.provider)
     || Reflect.ownKeys(record).some(key => key !== 'version' && key !== 'provider')) {
     throw new Error('remote provider state has an unsupported format')
   }
@@ -200,7 +227,7 @@ export function parseRemoteProviderState(value: unknown): RemoteProviderState {
 
 /** Atomic selection store whose absent-file state uses the configured default. */
 export class JsonRemoteProviderStore {
-  constructor(private readonly file: string, private readonly defaultProvider: RemoteProvider) {}
+  constructor(private readonly file: string, private readonly defaultProvider: RemoteProviderChoice) {}
 
   async load(): Promise<RemoteProviderState> {
     let stat
@@ -248,10 +275,8 @@ export class JsonRemoteProviderStore {
 }
 
 /** Resolve the first-run provider without letting environment values bypass validation. */
-export function configuredRemoteProvider(environment: NodeJS.ProcessEnv): RemoteProvider {
+export function configuredRemoteProvider(environment: NodeJS.ProcessEnv): RemoteProviderChoice {
   const value = environment.DSH_MOBILE_REMOTE_PROVIDER ?? 'tailscale'
-  if (value !== 'tailscale' && value !== 'cpolar' && value !== 'frp') {
-    throw new Error('DSH_MOBILE_REMOTE_PROVIDER must be tailscale, cpolar, or frp')
-  }
-  return value
+  if (value === 'tailscale' || value === 'cpolar' || value === 'frp' || value === 'chmlfrp') return value
+  throw new Error('DSH_MOBILE_REMOTE_PROVIDER must be tailscale, cpolar, frp, or chmlfrp')
 }

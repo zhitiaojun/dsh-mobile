@@ -400,7 +400,27 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   const frpChoiceDescription = element('span', 'dsh-mobile-control__provider-description'); frpChoiceDescription.textContent = t('frpDescription')
   frpChoiceTop.append(frpChoiceName); frpChoice.append(frpChoiceTop, frpChoiceDescription)
   selfHostedBody.append(frpChoice); selfHosted.append(selfHostedSummary, selfHostedBody)
-  providerSection.append(providerHeading, providerInfo, providerChoices, selfHosted)
+  // ---- ChmlFrp: a hosted platform that needs its own forked client and a pasted frpc.ini.
+  const chmlfrp = element('details', 'dsh-mobile-control__self-hosted')
+  const chmlfrpSummary = element('summary', 'dsh-mobile-control__self-hosted-summary')
+  const chmlfrpSummaryText = element('span')
+  const chmlfrpSummaryTitle = element('strong'); chmlfrpSummaryTitle.textContent = t('chmlfrpName')
+  const chmlfrpSummaryDescription = element('span'); chmlfrpSummaryDescription.textContent = t('chmlfrpDescription')
+  const chmlfrpBadge = element('span', 'dsh-mobile-control__provider-badge is-frp'); chmlfrpBadge.textContent = t('advanced')
+  chmlfrpSummaryText.append(chmlfrpSummaryTitle, chmlfrpSummaryDescription)
+  chmlfrpSummary.append(chmlfrpSummaryText, chmlfrpBadge)
+  const chmlfrpBody = element('div', 'dsh-mobile-control__self-hosted-body')
+  const chmlfrpComponentStatus = element('p', 'dsh-mobile-control__component-status'); chmlfrpComponentStatus.textContent = t('checkingComponent')
+  const chmlfrpInstall = element('button', 'dsh-mobile-control__primary dsh-mobile-control__frp-action'); chmlfrpInstall.type = 'button'; chmlfrpInstall.textContent = t('chmlfrpInstallClient')
+  const chmlfrpIniLabel = element('label', 'dsh-mobile-control__field'); chmlfrpIniLabel.textContent = t('chmlfrpIniLabel')
+  const chmlfrpIni = element('textarea'); chmlfrpIni.rows = 10; chmlfrpIni.spellcheck = false; chmlfrpIni.autocomplete = 'off'; chmlfrpIni.placeholder = t('chmlfrpIniPlaceholder')
+  chmlfrpIniLabel.append(chmlfrpIni)
+  const chmlfrpStatus = element('p', 'dsh-mobile-control__component-status'); chmlfrpStatus.textContent = t('frpConfigurationMissing')
+  const chmlfrpConfigure = element('button', 'dsh-mobile-control__primary dsh-mobile-control__frp-action'); chmlfrpConfigure.type = 'button'; chmlfrpConfigure.textContent = t('frpSaveConnect')
+  const chmlfrpPurge = element('button', 'dsh-mobile-control__danger'); chmlfrpPurge.type = 'button'; chmlfrpPurge.textContent = t('chmlfrpPurge')
+  chmlfrpBody.append(chmlfrpComponentStatus, chmlfrpInstall, chmlfrpIniLabel, chmlfrpStatus, chmlfrpConfigure, chmlfrpPurge)
+  chmlfrp.append(chmlfrpSummary, chmlfrpBody)
+  providerSection.append(providerHeading, providerInfo, providerChoices, selfHosted, chmlfrp)
   const frpSetup = element('section', 'dsh-mobile-control__frp-setup'); frpSetup.hidden = true
   const frpSetupTitle = element('h3', 'dsh-mobile-control__section-title'); frpSetupTitle.textContent = t('prepareFrp')
   const frpStep1 = element('section', 'dsh-mobile-control__frp-step')
@@ -711,6 +731,11 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
   let frpConfigured = false
   let frpLayoutInitialized = false
   let frpDownloadSize = '14.0'
+  let chmlfrpInstalled = false
+  let chmlfrpConfigured = false
+  let chmlfrpDownloadSize = '5.4'
+  /** Pinned ChmlFrp client version shown in confirmations; mirrors FRP_COMPONENT releases. */
+  const chmlfrpClientVersion = 'ChmlFrp-0.51.2_251023'
   let configuredFrpServer = ''
   let configuredFrpPort = 7000
   let configuredFrpOrigin = ''
@@ -974,6 +999,39 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
       : t('vpsDeploy')
     frpConnectionSummary.textContent = `${frpConfigured ? '✓ ' : ''}${t('frpStep1Title')}`
     frpComponentSummary.textContent = `${frpInstalled ? '✓ ' : ''}${t('frpStep3Title')}`
+    const chmlfrpProvider = providers.chmlfrp !== null && typeof providers.chmlfrp === 'object'
+      ? providers.chmlfrp as Record<string, unknown>
+      : {}
+    const chmlfrpComponentData = chmlfrpProvider.component !== null && typeof chmlfrpProvider.component === 'object'
+      ? chmlfrpProvider.component as Record<string, unknown>
+      : {}
+    const chmlfrpConfigData = chmlfrpProvider.configuration !== null && typeof chmlfrpProvider.configuration === 'object'
+      ? chmlfrpProvider.configuration as Record<string, unknown>
+      : {}
+    chmlfrpInstalled = chmlfrpComponentData.installed === true
+    // The saved configuration is shared, so this transport is "configured" only when
+    // the stored settings actually describe ChmlFrp.
+    chmlfrpConfigured = chmlfrpConfigData.configured === true && chmlfrpConfigData.kind === 'chmlfrp'
+    const chmlfrpSupported = chmlfrpComponentData.supported !== false
+    const chmlfrpVersion = typeof chmlfrpComponentData.version === 'string' ? chmlfrpComponentData.version : ''
+    const chmlfrpBytes = typeof chmlfrpComponentData.downloadBytes === 'number' ? chmlfrpComponentData.downloadBytes : 0
+    if (chmlfrpBytes > 0) chmlfrpDownloadSize = formatMegabytes(chmlfrpBytes)
+    chmlfrpInstall.hidden = chmlfrpInstalled || !chmlfrpSupported
+    chmlfrpInstall.textContent = chmlfrpBytes > 0
+      ? t('installWithSize', { size: formatMegabytes(chmlfrpBytes) })
+      : t('chmlfrpInstallClient')
+    chmlfrpInstall.disabled = remoteProviderBusy
+    chmlfrpConfigure.disabled = remoteProviderBusy || !chmlfrpInstalled
+    chmlfrpPurge.hidden = !chmlfrpInstalled && !chmlfrpConfigured
+    chmlfrpComponentStatus.textContent = !chmlfrpSupported
+      ? t('frpUnsupported')
+      : chmlfrpInstalled ? t('chmlfrpClientReady', { version: chmlfrpVersion }) : t('chmlfrpClientMissing')
+    chmlfrpStatus.textContent = chmlfrpConfigured
+      ? t('chmlfrpConfigured')
+      : t('frpConfigurationMissing')
+    chmlfrpBadge.textContent = chmlfrpConfigured && chmlfrpInstalled ? t('ready') : t('advanced')
+    chmlfrpSummary.textContent = ''
+    chmlfrpSummary.append(chmlfrpSummaryText, chmlfrpBadge)
     if (!frpLayoutInitialized) {
       frpConnectionGroup.open = !frpConfigured
       frpComponentGroup.open = !frpInstalled
@@ -1433,6 +1491,56 @@ function installControl(): { remove: () => void; toggle: () => void; isOpen: () 
     void controlRequestJson('/api/mobile-access/remote/frp/component/purge', { method: 'POST', body: JSON.stringify({ confirm: true }) }, LONG_CONTROL_REQUEST_TIMEOUT_MS)
       .then(renderRemote, error => { remoteStatus.textContent = t('purgeFailed', { error: String(error) }) })
       .finally(() => { remoteProviderBusy = false; frpPurge.disabled = false; loadRemote() })
+  })
+  chmlfrpInstall.addEventListener('click', () => {
+    if (remoteProviderBusy) return
+    const accepted = window.confirm(t('chmlfrpInstallConfirm', { version: chmlfrpClientVersion, size: chmlfrpDownloadSize }))
+    if (!accepted) return
+    remoteProviderBusy = true
+    chmlfrpInstall.disabled = true
+    chmlfrpInstall.textContent = t('downloading')
+    remoteStatus.textContent = t('installingFrp')
+    void controlRequestJson('/api/mobile-access/remote/chmlfrp/component/install', { method: 'POST', body: JSON.stringify({ confirm: true }) }, LONG_CONTROL_REQUEST_TIMEOUT_MS)
+      .then(renderRemote, error => { remoteStatus.textContent = t('installFailed', { error: String(error) }) })
+      .finally(() => { remoteProviderBusy = false; loadRemote() })
+  })
+  chmlfrpConfigure.addEventListener('click', () => {
+    if (remoteProviderBusy || !chmlfrpInstalled) return
+    const ini = chmlfrpIni.value.trim()
+    if (ini === '') {
+      remoteStatus.textContent = t('chmlfrpIniRequired')
+      return
+    }
+    remoteProviderBusy = true
+    chmlfrpConfigure.disabled = true
+    chmlfrpConfigure.setAttribute('aria-busy', 'true')
+    chmlfrpConfigure.textContent = t('saving')
+    void controlRequestJson('/api/mobile-access/remote/chmlfrp/configure', { method: 'POST', body: JSON.stringify({ ini }) })
+      .then(() => {
+        // Pasting the INI is itself the selection: switch the platform choice and start.
+        return controlRequestJson('/api/mobile-access/remote/provider', { method: 'POST', body: JSON.stringify({ provider: 'chmlfrp' }) })
+      })
+      .then(() => {
+        chmlfrpIni.value = ''
+        remoteStatus.textContent = t('frpSavingConnecting')
+        return controlRequestJson('/api/mobile-access/remote/control', { method: 'POST', body: JSON.stringify({ running: true }) })
+      })
+      .then(renderRemote, error => { remoteStatus.textContent = t('configureFailed', { error: String(error) }) })
+      .finally(() => {
+        remoteProviderBusy = false
+        chmlfrpConfigure.setAttribute('aria-busy', 'false')
+        chmlfrpConfigure.textContent = t('frpSaveConnect')
+        loadRemote()
+      })
+  })
+  chmlfrpPurge.addEventListener('click', () => {
+    if (remoteProviderBusy || !window.confirm(t('chmlfrpPurgeConfirm'))) return
+    remoteProviderBusy = true
+    chmlfrpPurge.disabled = true
+    remoteStatus.textContent = t('purgingFrp')
+    void controlRequestJson('/api/mobile-access/remote/chmlfrp/component/purge', { method: 'POST', body: JSON.stringify({ confirm: true }) }, LONG_CONTROL_REQUEST_TIMEOUT_MS)
+      .then(renderRemote, error => { remoteStatus.textContent = t('purgeFailed', { error: String(error) }) })
+      .finally(() => { remoteProviderBusy = false; chmlfrpPurge.disabled = false; loadRemote() })
   })
   remoteToggle.addEventListener('click', () => {
     remoteToggle.disabled = true

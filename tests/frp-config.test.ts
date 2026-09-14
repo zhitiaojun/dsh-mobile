@@ -26,7 +26,7 @@ const input = {
 
 describe('restricted FRP configuration', () => {
   it('accepts only the fixed single-purpose inputs', () => {
-    expect(parseFrpSettings(input)).toEqual({ version: 1, ...input })
+    expect(parseFrpSettings(input)).toEqual({ version: 1, kind: 'self-hosted', ...input })
     expect(() => parseFrpSettings({ ...input, publicOrigin: 'http://dsh.example.com' })).toThrow('frp_public_origin_invalid')
     expect(parseFrpSettings({ ...input, publicOrigin: 'https://1.2.3.4' }).publicOrigin).toBe('https://1.2.3.4')
     expect(parseFrpSettings({ ...input, serverAddress: '1.2.3.4' }).serverAddress).toBe('1.2.3.4')
@@ -44,9 +44,9 @@ describe('restricted FRP configuration', () => {
 
   it('merges blank VPS fields with the saved configuration', () => {
     const saved = parseFrpSettings(input)
-    expect(mergeSavedFrpSettings({ ...input }, saved)).toEqual({ version: 1, ...input })
+    expect(mergeSavedFrpSettings({ ...input }, saved)).toEqual({ version: 1, kind: 'self-hosted', ...input })
     expect(mergeSavedFrpSettings({ serverAddress: '', serverPort: Number.NaN, token: '', publicOrigin: '' }, saved))
-      .toEqual({ version: 1, ...input })
+      .toEqual({ version: 1, kind: 'self-hosted', ...input })
     expect(mergeSavedFrpSettings({ ...input, token: 'fedcba9876543210fedcba9876543210' }, saved).token)
       .toBe('fedcba9876543210fedcba9876543210')
     expect(() => mergeSavedFrpSettings({ serverAddress: '', token: '' }, undefined)).toThrow('frp_config_missing')

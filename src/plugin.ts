@@ -37,7 +37,7 @@ import { FunnelController, funnelExecutable } from './funnel.js'
 import { CpolarController } from './cpolar.js'
 import { CpolarComponentManager, type CpolarComponentStatus } from './cpolar-component.js'
 import { FrpComponentManager, type FrpComponentStatus } from './frp-component.js'
-import { FrpConfigStore, mergeSavedFrpSettings, mergeSavedFrpTarget, type FrpConfigurationStatus } from './frp-config.js'
+import { FrpConfigStore, mergeSavedChmlFrpSettings, mergeSavedFrpSettings, mergeSavedFrpTarget, parseChmlFrpIni, type FrpConfigurationStatus } from './frp-config.js'
 import { FrpController } from './frp.js'
 import { PluginReleaseManager, releaseProfileDirectory } from './release-update.js'
 import { installMobileFileLogger } from './file-logger.js'
@@ -46,6 +46,7 @@ import {
   JsonRemoteProviderStore,
   RemoteProviderCoordinator,
   type RemoteProvider,
+  type RemoteProviderChoice,
   type RemoteProviderController,
   type RemoteProviderStatus,
 } from './remote.js'
@@ -266,13 +267,14 @@ export function remoteGatewayConfig(
 }
 
 function remoteControlPayload(
-  provider: RemoteProvider,
+  provider: RemoteProviderChoice,
   status: RemoteProviderStatus,
   gateway: MobileAccessGateway | undefined,
   providerStatuses: Readonly<Record<RemoteProvider, RemoteProviderStatus>>,
   cpolarComponent: CpolarComponentStatus,
   frpComponent: FrpComponentStatus,
   frpConfiguration: FrpConfigurationStatus,
+  chmlfrpComponent: FrpComponentStatus,
 ): Record<string, unknown> {
   return {
     provider,
@@ -296,6 +298,15 @@ function remoteControlPayload(
         running: providerStatuses.frp.enabled,
         state: providerStatuses.frp.state,
         component: frpComponent,
+        configuration: frpConfiguration,
+      },
+      // ChmlFrp is an alternate client for the same controller, so the panel needs
+      // its own component metadata plus which dialect the saved settings describe.
+      chmlfrp: {
+        bundled: false,
+        running: providerStatuses.frp.enabled && frpConfiguration.kind === 'chmlfrp',
+        state: providerStatuses.frp.state,
+        component: chmlfrpComponent,
         configuration: frpConfiguration,
       },
     },
@@ -338,6 +349,9 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
   await cpolarComponent.initialize()
   const frpComponent = new FrpComponentManager({ stateDirectory })
   await frpComponent.initialize()
+  // ChmlFrp runs a forked frp 0.51.2 with its own pinned artifact and version string.
+  const chmlfrpComponent = new FrpComponentManager({ stateDirectory, variant: 'chmlfrp' })
+  await chmlfrpComponent.initialize()
   const frpConfig = new FrpConfigStore(join(remoteDirectory, 'frp', 'config'))
   await frpConfig.initialize()
   const unregisterBuiltin = mobileAccess.registerExtension({
@@ -466,7 +480,11 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     }),
     frp: new FrpController({
       store: frpStore,
-      executable: frpComponent.executable,
+      // Both FRP dialects share this controller; the saved transport decides
+      // which managed client (and config schema) a generation starts with.
+      resolveClient: kind => ({
+        executable: kind === 'chmlfrp' ? chmlfrpComponent.executable : frpComponent.executable,
+      }),
       config: frpConfig,
       instanceId,
       createGateway: createRemoteGateway,
@@ -492,6 +510,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
     cpolarComponent.status(),
     frpComponent.status(),
     frpConfig.status(),
+    chmlfrpComponent.status(),
   )
   const lanPayload = (): Record<string, unknown> => ({
     running: lanController.isRunning(),
@@ -516,7 +535,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
         ...(networkError === undefined ? {} : { networkError }),
       },
       remote: {
-        provider: remoteProviders.selected,
+        provider: remoteProviders.selected as RemoteProvider,
         running: remote.enabled,
         state: remote.state,
         ...(remote.origin === undefined ? {} : { origin: remote.origin }),
@@ -565,10 +584,51 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
         }
         if (request.method === 'POST' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/provider`) {
           const body = await readJsonObject(request, 4096)
-          if (body.provider !== 'tailscale' && body.provider !== 'cpolar' && body.provider !== 'frp') {
+          if (body.provider !== 'tailscale' && body.provider !== 'cpolar'
+            && body.provider !== 'frp' && body.provider !== 'chmlfrp') {
             throw new HttpError(400, 'bad_request')
           }
           await remoteProviders.select(body.provider)
+          sendJson(response, 200, remotePayload(), false)
+          return
+        }
+        if (request.method === 'POST' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/chmlfrp/configure`) {
+          // Accept the panel-generated frpc.ini verbatim. The pasted text is parsed
+          // immediately and only the extracted fields are persisted.
+          const body = await readJsonObject(request, 8192)
+          const settings = parseChmlFrpIni(body.ini, typeof body.publicOrigin === 'string' && body.publicOrigin !== ''
+            ? body.publicOrigin
+            : undefined)
+          await remoteProviders.mutate(async () => {
+            await frpConfig.configure(settings)
+            if (remoteControllers.frp.status().enabled && remoteProviders.selected === 'chmlfrp') {
+              await remoteControllers.frp.reconnect()
+            }
+          })
+          logger.info('chmlfrp configured host=%s port=%d origin=%s', settings.serverAddress, settings.serverPort, settings.publicOrigin)
+          sendJson(response, 200, remotePayload(), false)
+          return
+        }
+        if (request.method === 'POST' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/chmlfrp/component/install`) {
+          const body = await readJsonObject(request, 4096)
+          if (body.confirm !== true) throw new HttpError(400, 'bad_request')
+          logger.info('chmlfrp client install started')
+          try {
+            await remoteProviders.mutate(async () => chmlfrpComponent.install())
+            logger.info('chmlfrp client install completed')
+          } catch (error) {
+            logger.error('chmlfrp client install failed: %s', error instanceof Error ? error.stack ?? error.message : String(error))
+            throw error
+          }
+          sendJson(response, 200, remotePayload(), false)
+          return
+        }
+        if (request.method === 'POST' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/chmlfrp/component/purge`) {
+          const body = await readJsonObject(request, 4096)
+          if (body.confirm !== true) throw new HttpError(400, 'bad_request')
+          await remoteProviders.mutate(async () => {
+            await chmlfrpComponent.purge()
+          })
           sendJson(response, 200, remotePayload(), false)
           return
         }
@@ -658,7 +718,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
             Array.isArray(body.hostFingerprints) ? String(body.hostFingerprints.length) : 'none')
           const deployment = await remoteProviders.mutate(async () => {
             // Blank fields keep their saved values so a saved token can stay empty.
-            const settings = mergeSavedFrpSettings(body, frpConfig.settings())
+            const settings = mergeSavedFrpSettings(body, frpConfig.selfHostedSettings())
             const result = await deployVps(settings, parseVpsDeploymentInput({
               sshUser: body.sshUser,
               sshPort: body.sshPort,
@@ -676,7 +736,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
         }
         if (request.method === 'POST' && target.decodedPathname === `${LOCAL_ADMIN_PREFIX}/remote/frp/vps/uninstall-script`) {
           const body = await readJsonObject(request, 4096)
-          const savedTarget = mergeSavedFrpTarget(body, frpConfig.settings())
+          const savedTarget = mergeSavedFrpTarget(body, frpConfig.selfHostedSettings())
           const script = createVpsUninstallScript({
             serverPort: savedTarget.serverPort,
             ...(body.certName === undefined || body.certName === '' ? {} : { certName: body.certName }),
@@ -690,7 +750,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
           logger.info('vps uninstall requested host=%s sshUser=%s sshPort=%d',
             String(body.serverAddress), String(body.sshUser), Number(body.sshPort))
           const removal = await remoteProviders.mutate(async () => {
-            const savedTarget = mergeSavedFrpTarget(body, frpConfig.settings())
+            const savedTarget = mergeSavedFrpTarget(body, frpConfig.selfHostedSettings())
             const result = await uninstallVps(savedTarget.serverAddress, {
               serverPort: savedTarget.serverPort,
               ...(body.certName === undefined || body.certName === '' ? {} : { certName: body.certName }),
@@ -713,7 +773,7 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
           if (body.confirm !== true) throw new HttpError(400, 'bad_request')
           await remoteProviders.mutate(async () => {
             await remoteControllers.frp.setEnabled(false)
-            await Promise.all([frpComponent.purge(), frpConfig.purge()])
+            await Promise.all([frpComponent.purge(), chmlfrpComponent.purge(), frpConfig.purge()])
           })
           sendJson(response, 200, remotePayload(), false)
           return

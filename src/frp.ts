@@ -28,10 +28,26 @@ export interface FrpStatus {
 /** Inputs for one FRP client process and authenticated DSH gateway. */
 export interface FrpControllerOptions {
   readonly store: MobileAccessControlStore
-  readonly executable: string
+  /**
+   * Resolve the managed client for the currently saved transport. Both dialects
+   * share this controller, so the executable and its file layout are chosen per
+   * start from the saved `kind`. Callers that pin a single binary may omit this
+   * and set `executable` instead.
+   */
+  readonly resolveClient?: (kind: 'self-hosted' | 'chmlfrp') => {
+    readonly executable: string
+    /**
+     * Gateway listener for the ChmlFrp transport. The panel maps the tunnel to a
+     * fixed local port, so that transport must bind that exact port instead of
+     * letting the OS choose one.
+     */
+    readonly listenerPort?: number
+  }
   readonly config: FrpConfigStore
   readonly instanceId: string
-  readonly createGateway: (origin: string) => Promise<MobileAccessGateway>
+  /** Fixed client path; overrides `resolveClient` when a caller pins one binary. */
+  readonly executable?: string
+  readonly createGateway: (origin: string, listenPort?: number) => Promise<MobileAccessGateway>
   readonly onStatus?: (status: FrpStatus) => void
   readonly verifyConfig?: (executable: string, configFile: string) => Promise<void>
   readonly launchClient?: (executable: string, configFile: string) => ChildProcessWithoutNullStreams
@@ -169,7 +185,6 @@ export class FrpController implements RemoteProviderController {
   private startupAbort: AbortController | undefined
 
   constructor(private readonly options: FrpControllerOptions) {
-    if (!isAbsolute(options.executable)) throw new Error('frpc executable path must be absolute')
     if (!/^[a-f0-9]{64}$/u.test(options.instanceId)) throw new Error('FRP instance ID is invalid')
   }
 
@@ -252,8 +267,31 @@ export class FrpController implements RemoteProviderController {
 
   private async start(): Promise<void> {
     const generation = ++this.generation
+    const settings = this.options.config.settings()
+    if (settings === undefined) {
+      this.publish({ enabled: true, state: 'unavailable', errorCode: 'frp_config_missing' })
+      return
+    }
+    const family = settings.kind
+    // Both dialects share this controller, so the client binary is resolved from
+    // the saved transport; a pinned `executable` wins for fixed-binary callers.
+    let client: { readonly executable: string; readonly listenerPort?: number }
+    try {
+      const resolve = this.options.resolveClient
+      if (this.options.executable !== undefined) client = { executable: this.options.executable }
+      else if (resolve !== undefined) client = resolve(family)
+      else throw new Error('frp_client_unresolved')
+    } catch {
+      this.publish({ enabled: true, state: 'unavailable', errorCode: 'frp_component_missing' })
+      return
+    }
+    const executable = client.executable
+    if (!isAbsolute(executable)) {
+      this.publish({ enabled: true, state: 'unavailable', errorCode: 'frp_component_invalid' })
+      return
+    }
     let executableEntry
-    try { executableEntry = await lstat(this.options.executable) } catch {
+    try { executableEntry = await lstat(executable) } catch {
       this.publish({ enabled: true, state: 'unavailable', errorCode: 'frp_component_missing' })
       return
     }
@@ -261,28 +299,31 @@ export class FrpController implements RemoteProviderController {
       this.publish({ enabled: true, state: 'unavailable', errorCode: 'frp_component_invalid' })
       return
     }
-    const settings = this.options.config.settings()
-    if (settings === undefined) {
-      this.publish({ enabled: true, state: 'unavailable', errorCode: 'frp_config_missing' })
-      return
-    }
     this.publish({ enabled: true, state: 'starting', origin: settings.publicOrigin })
-    let exposed: boolean
-    try {
-      exposed = await (this.options.probeVhostExposure ?? defaultProbeVhostExposure)(
-        settings.serverAddress,
-        DEFAULT_VHOST_HTTP_PORT,
-      )
-    } catch {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_probe_failed' })
-      return
-    }
-    if (exposed) {
-      this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_publicly_reachable' })
-      return
+    if (family === 'self-hosted') {
+      // Only a private frps owns a plaintext vhost we must confirm stays loopback-only.
+      let exposed: boolean
+      try {
+        exposed = await (this.options.probeVhostExposure ?? defaultProbeVhostExposure)(
+          settings.serverAddress,
+          DEFAULT_VHOST_HTTP_PORT,
+        )
+      } catch {
+        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_probe_failed' })
+        return
+      }
+      if (exposed) {
+        this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'frp_vhost_publicly_reachable' })
+        return
+      }
     }
     let gateway: MobileAccessGateway
-    try { gateway = await this.options.createGateway(settings.publicOrigin) } catch {
+    try {
+      gateway = await this.options.createGateway(
+        settings.publicOrigin,
+        family === 'chmlfrp' ? client.listenerPort : undefined,
+      )
+    } catch {
       this.publish({ enabled: true, state: 'error', origin: settings.publicOrigin, errorCode: 'gateway_start_failed' })
       return
     }
@@ -294,14 +335,14 @@ export class FrpController implements RemoteProviderController {
     let configFile: string
     try {
       configFile = await this.options.config.writeRuntimeConfig(gateway.address().port)
-      await (this.options.verifyConfig ?? defaultVerifyConfig)(this.options.executable, configFile)
+      await (this.options.verifyConfig ?? defaultVerifyConfig)(executable, configFile)
     } catch {
       await this.failGeneration(generation, 'frp_config_verify_failed')
       return
     }
     if (generation !== this.generation || !this.enabled) return
     let child: ChildProcessWithoutNullStreams
-    try { child = (this.options.launchClient ?? defaultLaunchClient)(this.options.executable, configFile) } catch {
+    try { child = (this.options.launchClient ?? defaultLaunchClient)(executable, configFile) } catch {
       await this.failGeneration(generation, 'frp_launch_failed')
       return
     }
@@ -378,7 +419,7 @@ export class FrpController implements RemoteProviderController {
     await settleRemoteResources([
       () => child !== undefined && child.exitCode === null ? terminateRemoteProcess(child) : undefined,
       () => gateway?.close(),
-      () => rm(this.options.config.runtimeConfigFile, { force: true }),
+      () => this.options.config.removeRuntimeConfig(),
     ], 'FRP resource cleanup failed')
   }
 }

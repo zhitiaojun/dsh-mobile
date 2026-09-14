@@ -52,7 +52,9 @@ describe('remote provider selection', () => {
     expect(configuredRemoteProvider({})).toBe('tailscale')
     expect(configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'cpolar' })).toBe('cpolar')
     expect(configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'frp' })).toBe('frp')
-    expect(() => configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'invalid' })).toThrow('must be tailscale, cpolar, or frp')
+    // ChmlFrp is a panel choice backed by the FRP controller.
+    expect(configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'chmlfrp' })).toBe('chmlfrp')
+    expect(() => configuredRemoteProvider({ DSH_MOBILE_REMOTE_PROVIDER: 'invalid' })).toThrow('must be tailscale, cpolar, frp, or chmlfrp')
 
     const directory = await mkdtemp(join(tmpdir(), 'dsh-mobile-remote-provider-'))
     temporaryDirectories.push(directory)

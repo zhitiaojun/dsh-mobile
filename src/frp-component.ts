@@ -15,8 +15,13 @@ import {
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 
 const FRP_VERSION = '0.70.1'
+/** ChmlFrp ships a forked frp 0.51.2; its client reports this exact string for --version. */
+export const CHMLFRP_VERSION = 'ChmlFrp-0.51.2_251023'
 const MAX_ARCHIVE_ENTRIES = 128
 const MAX_ARCHIVE_LIST_BYTES = 256 * 1024
+
+/** Which FRP client family a managed component owns. */
+export type FrpComponentVariant = 'self-hosted' | 'chmlfrp'
 
 interface FrpArtifact {
   readonly platform: NodeJS.Platform
@@ -26,7 +31,14 @@ interface FrpArtifact {
   readonly downloadSha256: string
   readonly archiveName: string
   readonly executableName: string
+  /** Hosts allowed as the final redirect target. */
+  readonly allowedDownloadHosts: readonly string[]
+  /** Some provider archives place the executable at the archive root. */
+  readonly nestedExecutable: boolean
 }
+
+const GITHUB_HOSTS = ['github.com', 'githubusercontent.com'] as const
+const CHMLFRP_HOSTS = ['uapis.cn'] as const
 
 const releases = [
   {
@@ -34,46 +46,113 @@ const releases = [
     downloadBytes: 13_924_309,
     downloadSha256: '531f3cd3cc41c0b4f077b54fe6b7dd83c0ff727e7f0bf412a4c78fa279165de5',
     downloadUrl: `https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_windows_amd64.zip`,
+    allowedDownloadHosts: GITHUB_HOSTS, nestedExecutable: true,
   },
   {
     platform: 'win32', arch: 'arm64', archiveName: 'frp.zip', executableName: 'frpc.exe',
     downloadBytes: 12_204_751,
     downloadSha256: '74d3acaf0f03ee190dd0462f9b49861dca50b0559c5488af4b36572fc951fcca',
     downloadUrl: `https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_windows_arm64.zip`,
+    allowedDownloadHosts: GITHUB_HOSTS, nestedExecutable: true,
   },
   {
     platform: 'linux', arch: 'x64', archiveName: 'frp.tar.gz', executableName: 'frpc',
     downloadBytes: 13_924_042,
     downloadSha256: '333da23d1b9009d7c01638e9ba38cf4600f7d37d393f854e96ee1396adefa9a6',
     downloadUrl: `https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_amd64.tar.gz`,
+    allowedDownloadHosts: GITHUB_HOSTS, nestedExecutable: true,
   },
   {
     platform: 'linux', arch: 'arm64', archiveName: 'frp.tar.gz', executableName: 'frpc',
     downloadBytes: 12_371_290,
     downloadSha256: '3990f396a9a490ee7f0e5f355287750ed41520064ed999eab443b5e9a78d773d',
     downloadUrl: `https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_arm64.tar.gz`,
+    allowedDownloadHosts: GITHUB_HOSTS, nestedExecutable: true,
   },
   {
     platform: 'darwin', arch: 'x64', archiveName: 'frp.tar.gz', executableName: 'frpc',
     downloadBytes: 13_951_979,
     downloadSha256: 'cbf69cf26e5553e914e97d37f5d4367fa30f5f531d073a889465af4719281e25',
     downloadUrl: `https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_darwin_amd64.tar.gz`,
+    allowedDownloadHosts: GITHUB_HOSTS, nestedExecutable: true,
   },
   {
     platform: 'darwin', arch: 'arm64', archiveName: 'frp.tar.gz', executableName: 'frpc',
     downloadBytes: 12_670_664,
     downloadSha256: 'cfa733b5a261c1647edee3c1fc4133d2542989b28f5602e81d47fc821d25c55f',
     downloadUrl: `https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_darwin_arm64.tar.gz`,
+    allowedDownloadHosts: GITHUB_HOSTS, nestedExecutable: true,
   },
 ] as const satisfies readonly FrpArtifact[]
 
+const CHMLFRP_ARTIFACT_BASE = 'https://cf-v1.uapis.cn/download'
+
+/**
+ * Pinned ChmlFrp client artifacts. Host, byte size and SHA-256 are recorded from
+ * the official download page and verified before anything is executed. The zips
+ * place `frpc.exe` at the archive root instead of nesting it, so these entries set
+ * `nestedExecutable: false`.
+ */
+const chmlfrpReleases = [
+  {
+    platform: 'win32', arch: 'x64', archiveName: 'chmlfrp.zip', executableName: 'frpc.exe',
+    downloadBytes: 5_621_859,
+    downloadSha256: 'cdbdec6be0300023c5107650197788f0ec417d4cfdea920ca4c148467102b7e6',
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_2_windows_amd64.zip`,
+    allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
+  },
+  {
+    platform: 'win32', arch: 'arm64', archiveName: 'chmlfrp.zip', executableName: 'frpc.exe',
+    downloadBytes: 5_067_955,
+    downloadSha256: 'c0330afa4429924d071d60c4197a48bcd426526de8c2b09058be20295a657f7e',
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_2_windows_arm64.zip`,
+    allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
+  },
+  {
+    platform: 'linux', arch: 'x64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
+    downloadBytes: 12_063_513,
+    downloadSha256: 'e1a83d0cf7b7bf69d04610f2c0ba952e8185e377a3ef889921def52f03b4e4a6',
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_linux_amd64.tar.gz`,
+    allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
+  },
+  {
+    platform: 'linux', arch: 'arm64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
+    downloadBytes: 10_922_270,
+    downloadSha256: '2e1973aafabc6b7b2371ecdc679d6a0931753a137bc0ccc5d8b5f2ca4b17a253',
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_linux_arm64.tar.gz`,
+    allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
+  },
+  {
+    platform: 'darwin', arch: 'x64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
+    downloadBytes: 12_579_704,
+    downloadSha256: '23229fc02104cceb0d1483fd3fa053f9dae8e8b0725a8df5e9f09094541bbe53',
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_darwin_amd64.tar.gz`,
+    allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
+  },
+  {
+    platform: 'darwin', arch: 'arm64', archiveName: 'chmlfrp.tar.gz', executableName: 'frpc',
+    downloadBytes: 11_997_609,
+    downloadSha256: '541319d1324df135e0f21cb93bcd5b1231e62be4b22a5ca4d9831d04c2476417',
+    downloadUrl: `${CHMLFRP_ARTIFACT_BASE}/ChmlFrp-${CHMLFRP_VERSION}_darwin_arm64.tar.gz`,
+    allowedDownloadHosts: CHMLFRP_HOSTS, nestedExecutable: false,
+  },
+] as const satisfies readonly FrpArtifact[]
+
+function indexReleases(entries: readonly FrpArtifact[]): Readonly<Record<string, FrpArtifact>> {
+  return Object.freeze(Object.fromEntries(
+    entries.map(release => [`${release.platform}-${release.arch}`, Object.freeze(release)]),
+  ))
+}
+
 /** Pinned official FRP release metadata for supported desktop targets. */
-export const FRP_COMPONENT_RELEASES: Readonly<Record<string, FrpArtifact>> = Object.freeze(Object.fromEntries(
-  releases.map(release => [`${release.platform}-${release.arch}`, Object.freeze(release)]),
-))
+export const FRP_COMPONENT_RELEASES: Readonly<Record<string, FrpArtifact>> = indexReleases(releases)
+
+/** Pinned ChmlFrp client release metadata for supported desktop targets. */
+export const CHMLFRP_COMPONENT_RELEASES: Readonly<Record<string, FrpArtifact>> = indexReleases(chmlfrpReleases)
 
 /** Public, credential-free description of the managed FRP client. */
 export interface FrpComponentStatus {
+  readonly variant: FrpComponentVariant
   readonly supported: boolean
   readonly installed: boolean
   readonly version: string
@@ -87,12 +166,40 @@ export interface FrpComponentStatus {
 
 interface FrpComponentManagerOptions {
   readonly stateDirectory: string
+  readonly variant?: FrpComponentVariant
   readonly platform?: NodeJS.Platform
   readonly arch?: string
   readonly fetchArtifact?: (artifact: FrpArtifact, signal: AbortSignal) => Promise<Uint8Array>
   readonly extractArtifact?: (archive: string, destination: string, executableName: string) => Promise<void>
   readonly inspectExecutable?: (executable: string) => Promise<string>
 }
+
+/** Immutable per-variant wiring for the managed client. */
+interface FrpVariantProfile {
+  readonly releases: Readonly<Record<string, FrpArtifact>>
+  readonly version: string
+  readonly releasePage: string
+  /** Directory name under components/frp. */
+  readonly directory: string
+  readonly sourceFallbackUrl: string
+}
+
+const VARIANT_PROFILES: Readonly<Record<FrpComponentVariant, FrpVariantProfile>> = Object.freeze({
+  'self-hosted': Object.freeze({
+    releases: FRP_COMPONENT_RELEASES,
+    version: FRP_VERSION,
+    releasePage: `https://github.com/fatedier/frp/releases/tag/v${FRP_VERSION}`,
+    directory: FRP_VERSION,
+    sourceFallbackUrl: 'https://github.com/fatedier/frp/releases',
+  }),
+  'chmlfrp': Object.freeze({
+    releases: CHMLFRP_COMPONENT_RELEASES,
+    version: CHMLFRP_VERSION,
+    releasePage: 'https://panel.chmlfrp.net/tunnel/download',
+    directory: CHMLFRP_VERSION,
+    sourceFallbackUrl: `${CHMLFRP_ARTIFACT_BASE}/`,
+  }),
+})
 
 function inside(parent: string, child: string): boolean {
   const candidate = relative(parent, child)
@@ -193,12 +300,51 @@ async function defaultExtractArtifact(archive: string, destination: string, exec
   await copyFile(extracted, join(destination, executableName))
 }
 
+/**
+ * Select the executable when the provider archive keeps it at the archive root.
+ * Validates every entry with the same path rules as the nested selector so a
+ * hostile archive cannot escape the staging directory.
+ */
+export function selectRootExecutableEntry(entries: readonly string[], executableName: string): string {
+  if (entries.length === 0 || entries.length > MAX_ARCHIVE_ENTRIES) throw new Error('frp_archive_entries_invalid')
+  let executableEntry: string | undefined
+  for (const entry of entries) {
+    const segments = validatedArchiveEntry(entry)
+    if (segments.length !== 1 || segments[0] !== executableName) continue
+    if (executableEntry !== undefined) throw new Error('frp_archive_executable_ambiguous')
+    executableEntry = segments[0]
+  }
+  if (executableEntry === undefined) throw new Error('frp_archive_executable_missing')
+  return executableEntry
+}
+
+/** Extract a provider archive whose executable sits at the archive root. */
+async function rootExtractArtifact(archive: string, destination: string, executableName: string): Promise<void> {
+  const tar = process.platform === 'win32' ? 'tar.exe' : 'tar'
+  const listing = await runCapture(tar, ['-tf', archive])
+  const entries = listing.split(/\r?\n/u).filter(entry => entry.length > 0)
+  const executableEntry = selectRootExecutableEntry(entries, executableName)
+  const unpacked = join(destination, 'archive')
+  await mkdir(unpacked, { recursive: true, mode: 0o700 })
+  await runCapture(tar, ['-xf', archive, '-C', unpacked, executableEntry])
+  const extracted = join(unpacked, executableEntry)
+  if (!await regularFile(extracted)) throw new Error('frp_archive_executable_invalid')
+  await copyFile(extracted, join(destination, executableName))
+}
+
+function hostAllowed(hostname: string, allowed: readonly string[]): boolean {
+  return allowed.some(host => hostname === host || hostname.endsWith(`.${host}`))
+}
+
 async function defaultFetchArtifact(artifact: FrpArtifact, signal: AbortSignal): Promise<Uint8Array> {
   const response = await fetch(artifact.downloadUrl, { redirect: 'follow', signal })
   if (!response.ok) throw new Error(`frp_download_http_${String(response.status)}`)
   const finalUrl = new URL(response.url)
-  const officialHost = finalUrl.hostname === 'github.com' || finalUrl.hostname.endsWith('.githubusercontent.com')
-  if (finalUrl.protocol !== 'https:' || !officialHost) throw new Error('frp_download_origin_invalid')
+  // Pin the redirect target to the provider's own hosts so a hijacked redirect
+  // cannot swap in a foreign binary that still hashes as "expected".
+  if (finalUrl.protocol !== 'https:' || !hostAllowed(finalUrl.hostname, artifact.allowedDownloadHosts)) {
+    throw new Error('frp_download_origin_invalid')
+  }
   const lengthHeader = response.headers.get('content-length')
   const declaredLength = lengthHeader === null ? undefined : Number(lengthHeader)
   if (declaredLength !== undefined && (!Number.isFinite(declaredLength) || declaredLength !== artifact.downloadBytes)) {
@@ -232,12 +378,14 @@ async function defaultInspectExecutable(executable: string): Promise<string> {
   return (await runCapture(executable, ['--version'])).trim()
 }
 
-/** Owns the optional official frpc binary inside the DSH Mobile state directory. */
+/** Owns one optional FRP client binary inside the DSH Mobile state directory. */
 export class FrpComponentManager {
   readonly executable: string
   readonly componentRoot: string
   readonly componentStorage: string
   readonly logRoot: string
+  readonly variant: FrpComponentVariant
+  private readonly profile: FrpVariantProfile
   private readonly stagingRoot: string
   private readonly artifact: FrpArtifact | undefined
   private readonly fetchArtifact: (artifact: FrpArtifact, signal: AbortSignal) => Promise<Uint8Array>
@@ -253,9 +401,12 @@ export class FrpComponentManager {
     if (!isAbsolute(stateDirectory)) throw new Error('frp state directory must be absolute')
     const platform = options.platform ?? process.platform
     const arch = options.arch ?? process.arch
-    this.artifact = FRP_COMPONENT_RELEASES[`${platform}-${arch}`]
+    this.variant = options.variant ?? 'self-hosted'
+    const profile = VARIANT_PROFILES[this.variant]
+    this.profile = profile
+    this.artifact = profile.releases[`${platform}-${arch}`]
     this.componentRoot = join(stateDirectory, 'components', 'frp')
-    this.componentStorage = join(this.componentRoot, FRP_VERSION)
+    this.componentStorage = join(this.componentRoot, profile.directory)
     this.executable = join(this.componentStorage, platform === 'win32' ? 'frpc.exe' : 'frpc')
     this.logRoot = join(stateDirectory, 'logs', 'frp')
     this.stagingRoot = join(stateDirectory, 'staging', 'frp')
@@ -263,7 +414,9 @@ export class FrpComponentManager {
       if (!inside(stateDirectory, child)) throw new Error('frp component path escaped its state directory')
     }
     this.fetchArtifact = options.fetchArtifact ?? defaultFetchArtifact
-    this.extractArtifact = options.extractArtifact ?? defaultExtractArtifact
+    // Provider archives differ in layout; pick the extractor that matches the pin.
+    this.extractArtifact = options.extractArtifact
+      ?? (this.artifact?.nestedExecutable === false ? rootExtractArtifact : defaultExtractArtifact)
     this.inspectExecutable = options.inspectExecutable ?? defaultInspectExecutable
   }
 
@@ -274,7 +427,7 @@ export class FrpComponentManager {
     if (this.installed) {
       try {
         const version = await this.inspectExecutable(this.executable)
-        if (version !== FRP_VERSION) throw new Error('frp_component_version_mismatch')
+        if (version !== this.profile.version) throw new Error('frp_component_version_mismatch')
         this.errorCode = undefined
       } catch {
         this.installed = false
@@ -286,19 +439,20 @@ export class FrpComponentManager {
   /** Return component metadata without exposing configuration or credentials. */
   status(): FrpComponentStatus {
     return Object.freeze({
+      variant: this.variant,
       supported: this.artifact !== undefined,
       installed: this.installed,
-      version: FRP_VERSION,
+      version: this.profile.version,
       downloadBytes: this.artifact?.downloadBytes ?? 0,
       installedBytes: this.installedBytes,
-      sourceUrl: this.artifact?.downloadUrl ?? 'https://github.com/fatedier/frp/releases',
-      releasePage: `https://github.com/fatedier/frp/releases/tag/v${FRP_VERSION}`,
+      sourceUrl: this.artifact?.downloadUrl ?? this.profile.sourceFallbackUrl,
+      releasePage: this.profile.releasePage,
       storagePath: this.componentRoot,
       ...(this.errorCode === undefined ? {} : { errorCode: this.errorCode }),
     })
   }
 
-  /** Download, verify, and extract only frpc after explicit confirmation. */
+  /** Download, verify, and extract only the client after explicit confirmation. */
   install(): Promise<FrpComponentStatus> {
     return this.enqueue(async () => {
       const artifact = this.artifact
@@ -320,7 +474,7 @@ export class FrpComponentManager {
         if (!await regularFile(extracted)) throw new Error('frp_executable_missing')
         await chmod(extracted, 0o700)
         const version = await this.inspectExecutable(extracted)
-        if (version !== FRP_VERSION) throw new Error('frp_component_version_mismatch')
+        if (version !== this.profile.version) throw new Error('frp_component_version_mismatch')
         const candidate = join(this.componentRoot, `.install-${randomBytes(12).toString('hex')}`)
         await mkdir(candidate, { recursive: true, mode: 0o700 })
         const candidateExecutable = join(candidate, artifact.executableName)
@@ -336,12 +490,12 @@ export class FrpComponentManager {
     })
   }
 
-  /** Remove all FRP executable, staging, and log files owned by DSH Mobile. */
+  /** Remove this variant's executable plus its staging files. */
   purge(): Promise<FrpComponentStatus> {
     return this.enqueue(async () => {
       await Promise.all([
-        rm(this.componentRoot, { recursive: true, force: true }),
-        rm(this.logRoot, { recursive: true, force: true }),
+        // Only this variant's install directory: the other transport may still be in use.
+        rm(this.componentStorage, { recursive: true, force: true }),
         rm(this.stagingRoot, { recursive: true, force: true }),
       ])
       this.installed = false
