@@ -675,7 +675,13 @@ export async function apply(ctx: Context, config: PluginConfig): Promise<void> {
             && body.provider !== 'frp' && body.provider !== 'chmlfrp' && body.provider !== 'cloudflare') {
             throw new HttpError(400, 'bad_request')
           }
+          // The coordinator serializes provider work, so this call can sit behind an
+          // in-flight operation from another transport. Time it: a UI that "hangs"
+          // here is waiting on the queue, not on this handler.
+          const startedAt = Date.now()
+          logger.info('remote provider select requested provider=%s', String(body.provider))
           await remoteProviders.select(body.provider)
+          logger.info('remote provider select completed provider=%s elapsedMs=%d', String(body.provider), Date.now() - startedAt)
           sendJson(response, 200, remotePayload(), false)
           return
         }

@@ -12,7 +12,18 @@ import { settleRemoteResources, terminateRemoteProcess, type RemoteProviderContr
  */
 const START_TIMEOUT_MS = 150_000
 const DISCOVERY_REQUEST_TIMEOUT_MS = 5_000
-const DISCOVERY_RETRY_MS = 1_000
+/**
+ * First retry gap, doubling up to {@link DISCOVERY_RETRY_MAX_MS}.
+ *
+ * This must NOT be a tight fixed interval. A quick-tunnel hostname is brand new, so
+ * its first lookups often fail slowly, and Node resolves DNS on a libuv threadpool
+ * that defaults to four threads. Polling once a second across the whole start window
+ * queues well over a hundred lookups, which can occupy every thread and stall
+ * unrelated work in the DSH process — observed as the entire UI hanging rather than
+ * just this panel.
+ */
+const DISCOVERY_RETRY_MS = 1_500
+const DISCOVERY_RETRY_MAX_MS = 15_000
 const MAX_DISCOVERY_BYTES = 16 * 1024
 const QUICK_TUNNEL_URL = /https:\/\/([a-z0-9-]+\.trycloudflare\.com)/iu
 /**
@@ -323,6 +334,7 @@ export class CloudflareController implements RemoteProviderController {
     const probe = this.options.probeDiscovery ?? defaultProbeDiscovery
     const instanceId = this.options.instanceId
     let lastFailure: string | undefined
+    let delay = this.options.retryIntervalMs ?? DISCOVERY_RETRY_MS
     while (!signal.aborted && Date.now() < deadline) {
       try {
         if (await probe(origin, instanceId, signal)) {
@@ -356,10 +368,12 @@ export class CloudflareController implements RemoteProviderController {
           signal.removeEventListener('abort', finish)
           resolveWait()
         }
-        const timer = setTimeout(finish, this.options.retryIntervalMs ?? DISCOVERY_RETRY_MS)
+        const timer = setTimeout(finish, delay)
         timer.unref()
         signal.addEventListener('abort', finish, { once: true })
       })
+      // Back off instead of hammering DNS: see DISCOVERY_RETRY_MS.
+      delay = Math.min(delay * 2, DISCOVERY_RETRY_MAX_MS)
     }
     if (!signal.aborted) {
       this.options.onDiscoveryFailure?.(origin, lastFailure)
